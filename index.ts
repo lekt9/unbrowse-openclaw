@@ -12,6 +12,8 @@
  *   unbrowse_replay    — Test discovered endpoints with extracted auth
  *   unbrowse_stealth   — Launch stealth cloud browser (Browser Use)
  *   unbrowse_skills    — List all auto-discovered skills
+ *   unbrowse_publish   — Publish skill to cloud index (earn USDC via x402)
+ *   unbrowse_search    — Search & install skills from the cloud index
  *
  * Hooks:
  *   after_tool_call    — Auto-discovers skills when agent uses browser tool
@@ -33,6 +35,8 @@ import {
   captureFromStealth,
   type StealthSession,
 } from "./src/stealth-browser.js";
+import { SkillIndexClient, type PublishPayload } from "./src/skill-index.js";
+import { sanitizeApiTemplate, extractEndpoints, extractPublishableAuth } from "./src/skill-sanitizer.js";
 
 // ── Tool Schemas ──────────────────────────────────────────────────────────────
 
@@ -127,6 +131,40 @@ const SKILLS_SCHEMA = {
   required: [] as string[],
 };
 
+const PUBLISH_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    service: {
+      type: "string" as const,
+      description: "Service name (skill directory name) to publish to the cloud index",
+    },
+    skillsDir: {
+      type: "string" as const,
+      description: "Skills directory (default: ~/.clawdbot/skills)",
+    },
+  },
+  required: ["service"],
+};
+
+const SEARCH_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    query: {
+      type: "string" as const,
+      description: "Search query — service name, API type, or description",
+    },
+    tags: {
+      type: "string" as const,
+      description: "Comma-separated tags to filter by (e.g., rest,finance)",
+    },
+    install: {
+      type: "string" as const,
+      description: "Skill ID to download and install locally (requires x402 USDC payment)",
+    },
+  },
+  required: [] as string[],
+};
+
 // ── Plugin ────────────────────────────────────────────────────────────────────
 
 const plugin = {
@@ -143,6 +181,16 @@ const plugin = {
     const defaultOutputDir = (cfg.skillsOutputDir as string) ?? join(homedir(), ".clawdbot", "skills");
     const browserUseApiKey = cfg.browserUseApiKey as string | undefined;
     const autoDiscoverEnabled = (cfg.autoDiscover as boolean) ?? true;
+    const skillIndexUrl = (cfg.skillIndexUrl as string) ?? process.env.UNBROWSE_INDEX_URL ?? "https://skills.unbrowse.ai";
+    const creatorWallet = (cfg.creatorWallet as string) ?? process.env.UNBROWSE_CREATOR_WALLET;
+    const evmPrivateKey = (cfg.skillIndexEvmPrivateKey as string) ?? process.env.UNBROWSE_EVM_PRIVATE_KEY;
+
+    // ── Skill Index Client ─────────────────────────────────────────────────
+    const indexClient = new SkillIndexClient({
+      indexUrl: skillIndexUrl,
+      creatorWallet,
+      evmPrivateKey,
+    });
 
     // ── Auto-Discovery Engine ─────────────────────────────────────────────
     const discovery = new AutoDiscovery({
@@ -600,6 +648,181 @@ const plugin = {
             };
           },
         },
+
+        // ── unbrowse_publish ───────────────────────────────────────────
+        {
+          name: "unbrowse_publish",
+          label: "Publish Skill",
+          description:
+            "Publish a locally generated skill to the cloud skill index. " +
+            "Only the API definition is published (endpoints, auth method type, base URL). " +
+            "Credentials stay local. Your wallet address is embedded for x402 profit sharing.",
+          parameters: PUBLISH_SCHEMA,
+          async execute(_toolCallId: string, params: unknown) {
+            const p = params as { service: string; skillsDir?: string };
+
+            if (!creatorWallet) {
+              return {
+                content: [{
+                  type: "text",
+                  text: "No creator wallet configured. Set creatorWallet in unbrowse plugin config or UNBROWSE_CREATOR_WALLET env var (0x address).",
+                }],
+              };
+            }
+
+            const skillsDir = p.skillsDir ?? defaultOutputDir;
+            const skillDir = join(skillsDir, p.service);
+            const skillMdPath = join(skillDir, "SKILL.md");
+            const authJsonPath = join(skillDir, "auth.json");
+            const apiTsPath = join(skillDir, "scripts", "api.ts");
+
+            if (!existsSync(skillMdPath)) {
+              return { content: [{ type: "text", text: `Skill not found: ${skillDir}. Generate it first with unbrowse_learn or unbrowse_capture.` }] };
+            }
+
+            try {
+              const skillMd = readFileSync(skillMdPath, "utf-8");
+              const endpoints = extractEndpoints(skillMd);
+
+              let baseUrl = "";
+              let authMethodType = "Unknown";
+
+              if (existsSync(authJsonPath)) {
+                const authStr = readFileSync(authJsonPath, "utf-8");
+                const pub = extractPublishableAuth(authStr);
+                baseUrl = pub.baseUrl;
+                authMethodType = pub.authMethodType;
+              }
+
+              let apiTemplate = "";
+              if (existsSync(apiTsPath)) {
+                apiTemplate = sanitizeApiTemplate(readFileSync(apiTsPath, "utf-8"));
+              }
+
+              const payload: PublishPayload = {
+                service: p.service,
+                baseUrl,
+                authMethodType,
+                endpoints,
+                skillMd,
+                apiTemplate,
+                creatorWallet,
+              };
+
+              const result = await indexClient.publish(payload);
+
+              const summary = [
+                `Skill published to cloud index`,
+                `Service: ${p.service}`,
+                `ID: ${result.id}`,
+                `Slug: ${result.slug}`,
+                `Version: ${result.version}`,
+                `Endpoints: ${endpoints.length}`,
+                `Creator wallet: ${creatorWallet}`,
+                ``,
+                `Others can find and download this skill via unbrowse_search.`,
+                `You earn USDC for each download via x402.`,
+              ].join("\n");
+
+              logger.info(`[unbrowse] Published: ${p.service} → ${result.id}`);
+              return { content: [{ type: "text", text: summary }] };
+            } catch (err) {
+              return { content: [{ type: "text", text: `Publish failed: ${(err as Error).message}` }] };
+            }
+          },
+        },
+
+        // ── unbrowse_search ────────────────────────────────────────────
+        {
+          name: "unbrowse_search",
+          label: "Search & Install Skills",
+          description:
+            "Search the cloud skill index for API skills discovered by others. " +
+            "Searching is free. Installing a skill costs $0.01 USDC via x402 on Base. " +
+            "Use query to search, install to download and install a specific skill by ID.",
+          parameters: SEARCH_SCHEMA,
+          async execute(_toolCallId: string, params: unknown) {
+            const p = params as { query?: string; tags?: string; install?: string };
+
+            // ── Install mode ──
+            if (p.install) {
+              try {
+                const pkg = await indexClient.download(p.install);
+
+                // Save locally
+                const skillDir = join(defaultOutputDir, pkg.service);
+                const scriptsDir = join(skillDir, "scripts");
+                const { mkdirSync, writeFileSync } = await import("node:fs");
+                mkdirSync(scriptsDir, { recursive: true });
+
+                writeFileSync(join(skillDir, "SKILL.md"), pkg.skillMd, "utf-8");
+                writeFileSync(join(scriptsDir, "api.ts"), pkg.apiTemplate, "utf-8");
+
+                // Create placeholder auth.json — user adds their own credentials
+                writeFileSync(join(skillDir, "auth.json"), JSON.stringify({
+                  service: pkg.service,
+                  baseUrl: pkg.baseUrl,
+                  authMethod: pkg.authMethodType,
+                  timestamp: new Date().toISOString(),
+                  notes: ["Downloaded from skill index — add your own auth credentials"],
+                  headers: {},
+                  cookies: {},
+                }, null, 2), "utf-8");
+
+                discovery.markLearned(pkg.service);
+
+                const summary = [
+                  `Skill installed: ${pkg.service}`,
+                  `Location: ${skillDir}`,
+                  `Endpoints: ${pkg.endpoints.length}`,
+                  `Auth: ${pkg.authMethodType}`,
+                  `Payment: $0.01 USDC on Base via x402`,
+                  ``,
+                  `Add your auth credentials to auth.json or use unbrowse_auth to extract from browser.`,
+                ].join("\n");
+
+                logger.info(`[unbrowse] Installed from index: ${pkg.service}`);
+                return { content: [{ type: "text", text: summary }] };
+              } catch (err) {
+                return { content: [{ type: "text", text: `Install failed: ${(err as Error).message}` }] };
+              }
+            }
+
+            // ── Search mode ──
+            if (!p.query) {
+              return { content: [{ type: "text", text: "Provide a query to search, or install=<id> to download a skill." }] };
+            }
+
+            try {
+              const results = await indexClient.search(p.query, {
+                tags: p.tags,
+                limit: 10,
+              });
+
+              if (results.skills.length === 0) {
+                return { content: [{ type: "text", text: `No skills found for "${p.query}". Try different keywords.` }] };
+              }
+
+              const lines = [
+                `Cloud Skills (${results.total} results for "${p.query}"):`,
+                "",
+              ];
+
+              for (const skill of results.skills) {
+                const tags = skill.tags.length > 0 ? ` | Tags: ${skill.tags.join(", ")}` : "";
+                lines.push(
+                  `  ${skill.service} — ${skill.endpointCount} endpoints, ${skill.authMethodType} (${skill.baseUrl})`,
+                  `    ID: ${skill.id} | Downloads: ${skill.downloadCount}${tags}`,
+                );
+              }
+
+              lines.push("", `Use unbrowse_search with install="<id>" to download and install ($0.01 USDC).`);
+              return { content: [{ type: "text", text: lines.join("\n") }] };
+            } catch (err) {
+              return { content: [{ type: "text", text: `Search failed: ${(err as Error).message}` }] };
+            }
+          },
+        },
       ];
 
       return toolList;
@@ -612,6 +835,8 @@ const plugin = {
       "unbrowse_replay",
       "unbrowse_stealth",
       "unbrowse_skills",
+      "unbrowse_publish",
+      "unbrowse_search",
     ];
 
     api.registerTool(tools, { names: toolNames });
@@ -646,6 +871,7 @@ const plugin = {
       `${toolCount} tools`,
       autoDiscoverEnabled ? "auto-discover" : null,
       browserUseApiKey ? "stealth browsers" : null,
+      creatorWallet ? "x402 publishing" : null,
     ].filter(Boolean).join(", ");
 
     logger.info(`[unbrowse] Plugin registered (${features})`);

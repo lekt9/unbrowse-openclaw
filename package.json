@@ -6,6 +6,10 @@
   "clawdbot": {
     "extensions": ["./index.ts"]
   },
+  "dependencies": {
+    "x402": "^0.1.0",
+    "viem": "^2.0.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "clawdbot": "*",
