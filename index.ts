@@ -78,6 +78,18 @@ const CAPTURE_SCHEMA = {
       type: "number" as const,
       description: "How long to wait on each page for network activity in ms (default: 5000).",
     },
+    crawl: {
+      type: "boolean" as const,
+      description: "Browse the site after loading seed URLs to discover more API endpoints. Follows same-domain links. (default: true)",
+    },
+    maxPages: {
+      type: "number" as const,
+      description: "Max pages to visit during crawl (default: 15). Only used when crawl=true.",
+    },
+    testEndpoints: {
+      type: "boolean" as const,
+      description: "Auto-test discovered GET endpoints with captured auth to verify they work (default: true).",
+    },
   },
   required: ["urls"],
 };
@@ -345,8 +357,8 @@ const plugin = {
           label: "Capture APIs",
           description:
             "Capture API traffic from any website. Just provide URLs — the tool automatically " +
-            "launches a browser, visits each page, and captures all network requests. No extension, " +
-            "no manual Chrome steps. Generates a complete skill package. " +
+            "launches a browser, visits each page, crawls same-domain links to discover more endpoints, " +
+            "checks for OpenAPI/Swagger specs, and auto-tests all GET endpoints. No extension needed. " +
             "For sites that require login, use unbrowse_login first to establish a session.",
           parameters: CAPTURE_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
@@ -354,6 +366,9 @@ const plugin = {
               outputDir?: string;
               urls: string[];
               waitMs?: number;
+              crawl?: boolean;
+              maxPages?: number;
+              testEndpoints?: boolean;
             };
 
             if (!p.urls || p.urls.length === 0) {
@@ -362,34 +377,97 @@ const plugin = {
 
             try {
               const { captureFromChromeProfile } = await import("./src/profile-capture.js");
-              const { har, cookies, requestCount, method } = await captureFromChromeProfile(p.urls, {
+
+              const shouldCrawl = p.crawl !== false;
+              const shouldTest = p.testEndpoints !== false;
+
+              const { har, cookies, requestCount, method, crawlResult } = await captureFromChromeProfile(p.urls, {
                 waitMs: p.waitMs,
                 browserPort,
+                crawl: shouldCrawl,
+                crawlOptions: {
+                  maxPages: p.maxPages ?? 15,
+                  discoverOpenApi: true,
+                },
               });
 
               if (requestCount === 0) {
                 return { content: [{ type: "text", text: "No API requests captured. The pages may not make API calls, or try waiting longer (waitMs)." }] };
               }
 
-              const apiData = parseHar(har);
+              let apiData = parseHar(har);
               for (const [name, value] of Object.entries(cookies)) {
                 if (!apiData.cookies[name]) apiData.cookies[name] = value;
               }
 
-              const result = await generateSkill(apiData, p.outputDir ?? defaultOutputDir);
+              // Merge OpenAPI spec endpoints if found
+              const openApiSpec = crawlResult?.openApiSpec ?? null;
+              if (openApiSpec) {
+                const { mergeOpenApiEndpoints } = await import("./src/har-parser.js");
+                const specBaseUrl = openApiSpec.baseUrl ?? apiData.baseUrl;
+                apiData = mergeOpenApiEndpoints(apiData, openApiSpec.endpoints, specBaseUrl);
+              }
+
+              // Auto-test GET endpoints
+              let testSummary: { total: number; verified: number; failed: number; skipped: number; results: Array<{ method: string; path: string; ok: boolean; hasData: boolean }> } | null = null;
+              if (shouldTest && Object.keys(apiData.endpoints).length > 0) {
+                try {
+                  const { testGetEndpoints } = await import("./src/endpoint-tester.js");
+                  testSummary = await testGetEndpoints(
+                    apiData.baseUrl,
+                    apiData.endpoints,
+                    apiData.authHeaders,
+                    { ...apiData.cookies, ...cookies },
+                  );
+
+                  // Mark endpoints as verified based on test results
+                  for (const tr of testSummary.results) {
+                    for (const [, reqs] of Object.entries(apiData.endpoints)) {
+                      for (const r of reqs) {
+                        if (r.path === tr.path && r.method === tr.method) {
+                          r.verified = tr.ok && tr.hasData;
+                        }
+                      }
+                    }
+                  }
+                } catch (testErr) {
+                  logger.warn(`[unbrowse] Endpoint testing failed: ${(testErr as Error).message}`);
+                }
+              }
+
+              const result = await generateSkill(apiData, p.outputDir ?? defaultOutputDir, {
+                verifiedEndpoints: testSummary?.verified,
+                unverifiedEndpoints: testSummary?.failed,
+                openApiSource: crawlResult?.openApiSource,
+                pagesCrawled: crawlResult?.pagesCrawled,
+              });
               discovery.markLearned(result.service);
 
-              const summary = [
+              // Build summary
+              const summaryLines = [
                 `Captured (${method}): ${requestCount} requests from ${p.urls.length} page(s)`,
+              ];
+              if (crawlResult && crawlResult.pagesCrawled > 0) {
+                summaryLines.push(`Crawled: ${crawlResult.pagesCrawled} additional pages`);
+              }
+              if (openApiSpec) {
+                summaryLines.push(`OpenAPI: ${crawlResult?.openApiSource} (${openApiSpec.endpoints.length} endpoints)`);
+              }
+              summaryLines.push(
                 `Skill: ${result.service}`,
                 `Auth: ${result.authMethod}`,
                 `Endpoints: ${result.endpointCount}`,
+              );
+              if (testSummary) {
+                summaryLines.push(`Verified: ${testSummary.verified}/${testSummary.total} GET endpoints`);
+              }
+              summaryLines.push(
                 `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
                 `Installed: ${result.skillDir}`,
-              ].join("\n");
+              );
 
-              logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints, via ${method})`);
-              return { content: [{ type: "text", text: summary }] };
+              logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints, ${crawlResult?.pagesCrawled ?? 0} crawled, via ${method})`);
+              return { content: [{ type: "text", text: summaryLines.join("\n") }] };
             } catch (err) {
               const msg = (err as Error).message;
               if (msg.includes("Target page, context or browser has been closed")) {

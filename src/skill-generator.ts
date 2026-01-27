@@ -42,7 +42,10 @@ function generateSkillMd(service: string, data: ApiData): string {
   for (const [, reqs] of Object.entries(data.endpoints)) {
     const req = reqs[0];
     const desc = endpointDesc(req.path, req.method);
-    endpointLines.push(`- \`${req.method} ${req.path}\` — ${desc}`);
+    const badge = req.verified === true ? " ✓"
+               : req.fromSpec ? " [from-spec]"
+               : "";
+    endpointLines.push(`- \`${req.method} ${req.path}\` — ${desc}${badge}`);
   }
 
   const cookieNote = Object.keys(data.cookies).length > 0
@@ -301,7 +304,16 @@ testApi().then((ok) => process.exit(ok ? 0 : 1));
  * Creates the skill directory with SKILL.md, auth.json, scripts/api.ts,
  * and test.ts. Credentials are also stored in the encrypted vault if available.
  */
-export async function generateSkill(data: ApiData, outputDir?: string): Promise<SkillResult> {
+export async function generateSkill(
+  data: ApiData,
+  outputDir?: string,
+  meta?: {
+    verifiedEndpoints?: number;
+    unverifiedEndpoints?: number;
+    openApiSource?: string | null;
+    pagesCrawled?: number;
+  },
+): Promise<SkillResult> {
   const service = data.service;
   const skillsDir = outputDir
     ? resolve(outputDir)
@@ -353,5 +365,9 @@ export async function generateSkill(data: ApiData, outputDir?: string): Promise<
     endpointCount: Object.keys(data.endpoints).length,
     authHeaderCount: Object.keys(data.authHeaders).length,
     cookieCount: Object.keys(data.cookies).length,
+    verifiedEndpoints: meta?.verifiedEndpoints,
+    unverifiedEndpoints: meta?.unverifiedEndpoints,
+    openApiSource: meta?.openApiSource,
+    pagesCrawled: meta?.pagesCrawled,
   };
 }

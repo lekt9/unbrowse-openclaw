@@ -11,6 +11,7 @@
  */
 
 import type { HarEntry } from "./types.js";
+import type { CrawlResult, OpenApiSpec } from "./site-crawler.js";
 
 /** Captured request with full headers. */
 interface CapturedEntry {
@@ -29,6 +30,7 @@ type CaptureResult = {
   requestCount: number;
   entries: CapturedEntry[];
   method: string;
+  crawlResult?: CrawlResult;
 };
 
 function attachListeners(
@@ -113,14 +115,34 @@ export async function captureFromChromeProfile(
     waitMs?: number;
     headless?: boolean;
     browserPort?: number;
+    crawl?: boolean;
+    crawlOptions?: {
+      maxPages?: number;
+      maxTimeMs?: number;
+      maxDepth?: number;
+      discoverOpenApi?: boolean;
+    };
   } = {},
 ): Promise<CaptureResult> {
   const { chromium } = await import("playwright");
   const waitMs = opts.waitMs ?? 5000;
   const browserPort = opts.browserPort ?? 18791;
+  const shouldCrawl = opts.crawl !== false;
 
   const captured: CapturedEntry[] = [];
   const pendingRequests = new Map<string, Partial<CapturedEntry>>();
+
+  // Helper: crawl after visiting seed URLs (reuses the page with listeners already attached)
+  async function maybeCrawl(page: any, context: any): Promise<CrawlResult | undefined> {
+    if (!shouldCrawl || !urls[0]) return undefined;
+    const { crawlSite } = await import("./site-crawler.js");
+    return crawlSite(page, context, urls[0], {
+      maxPages: opts.crawlOptions?.maxPages ?? 15,
+      maxTimeMs: opts.crawlOptions?.maxTimeMs ?? 60_000,
+      maxDepth: opts.crawlOptions?.maxDepth ?? 2,
+      discoverOpenApi: opts.crawlOptions?.discoverOpenApi ?? true,
+    });
+  }
 
   // ── Strategy 1: Connect to clawdbot's managed browser ──
   let browser = await tryCdpConnect(chromium, browserPort);
@@ -130,23 +152,28 @@ export async function captureFromChromeProfile(
       for (const page of context.pages()) attachListeners(page, captured, pendingRequests);
       context.on("page", (page: any) => attachListeners(page, captured, pendingRequests));
 
+      let lastPage: any;
       for (const url of urls) {
-        const page = await context.newPage();
-        attachListeners(page, captured, pendingRequests);
+        lastPage = await context.newPage();
+        attachListeners(lastPage, captured, pendingRequests);
         try {
-          await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+          await lastPage.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
         } catch {
-          await page.waitForTimeout(waitMs);
+          await lastPage.waitForTimeout(waitMs);
         }
-        await page.waitForTimeout(waitMs);
+        await lastPage.waitForTimeout(waitMs);
       }
+
+      const crawlResult = lastPage ? await maybeCrawl(lastPage, context) : undefined;
 
       const browserCookies = await context.cookies();
       const cookies: Record<string, string> = {};
       for (const c of browserCookies) cookies[c.name] = c.value;
 
       await browser.close();
-      return toHarResult(captured, cookies, "clawdbot-browser");
+      const result = toHarResult(captured, cookies, "clawdbot-browser");
+      result.crawlResult = crawlResult;
+      return result;
     }
   }
 
@@ -159,30 +186,33 @@ export async function captureFromChromeProfile(
         for (const page of context.pages()) attachListeners(page, captured, pendingRequests);
         context.on("page", (page: any) => attachListeners(page, captured, pendingRequests));
 
+        let lastPage: any;
         for (const url of urls) {
-          const page = await context.newPage();
-          attachListeners(page, captured, pendingRequests);
+          lastPage = await context.newPage();
+          attachListeners(lastPage, captured, pendingRequests);
           try {
-            await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+            await lastPage.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
           } catch {
-            await page.waitForTimeout(waitMs);
+            await lastPage.waitForTimeout(waitMs);
           }
-          await page.waitForTimeout(waitMs);
+          await lastPage.waitForTimeout(waitMs);
         }
+
+        const crawlResult = lastPage ? await maybeCrawl(lastPage, context) : undefined;
 
         const browserCookies = await context.cookies();
         const cookies: Record<string, string> = {};
         for (const c of browserCookies) cookies[c.name] = c.value;
 
         await browser.close();
-        return toHarResult(captured, cookies, "chrome-cdp");
+        const result = toHarResult(captured, cookies, "chrome-cdp");
+        result.crawlResult = crawlResult;
+        return result;
       }
     }
   }
 
   // ── Strategy 3: Launch fresh Playwright Chromium ──
-  // No real Chrome profile (Chrome blocks --remote-debugging-port with default profile).
-  // This works for public pages. For authenticated pages, use unbrowse_login first.
   browser = await chromium.launch({
     headless: opts.headless ?? true,
     timeout: 15_000,
@@ -208,12 +238,16 @@ export async function captureFromChromeProfile(
     await page.waitForTimeout(waitMs);
   }
 
+  const crawlResult = await maybeCrawl(page, context);
+
   const browserCookies = await context.cookies();
   const cookies: Record<string, string> = {};
   for (const c of browserCookies) cookies[c.name] = c.value;
 
   await browser.close();
-  return toHarResult(captured, cookies, "playwright");
+  const result = toHarResult(captured, cookies, "playwright");
+  result.crawlResult = crawlResult;
+  return result;
 }
 
 /**

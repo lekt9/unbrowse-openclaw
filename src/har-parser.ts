@@ -236,3 +236,53 @@ export function parseHar(har: { log: { entries: HarEntry[] } }): ApiData {
     endpoints: groupByDomainAndPath(requests),
   };
 }
+
+/**
+ * Merge OpenAPI spec endpoints into existing API data.
+ *
+ * Endpoints from the spec that weren't already discovered via traffic
+ * capture are added with status 0 and fromSpec=true.
+ */
+export function mergeOpenApiEndpoints(
+  apiData: ApiData,
+  openApiEndpoints: { method: string; path: string; summary?: string }[],
+  baseUrl: string,
+): ApiData {
+  const existingKeys = new Set<string>();
+  for (const [, reqs] of Object.entries(apiData.endpoints)) {
+    for (const r of reqs) {
+      existingKeys.add(`${r.method}:${r.path}`);
+    }
+  }
+
+  let domain: string;
+  try {
+    domain = new URL(baseUrl).host;
+  } catch {
+    domain = "unknown";
+  }
+
+  for (const ep of openApiEndpoints) {
+    const key = `${ep.method}:${ep.path}`;
+    if (existingKeys.has(key)) continue;
+
+    const groupKey = `${domain}:${ep.path}`;
+    const syntheticRequest: ParsedRequest = {
+      method: ep.method,
+      url: `${baseUrl.replace(/\/$/, "")}${ep.path}`,
+      path: ep.path,
+      domain,
+      status: 0,
+      fromSpec: true,
+    };
+
+    if (!apiData.endpoints[groupKey]) {
+      apiData.endpoints[groupKey] = [];
+    }
+    apiData.endpoints[groupKey].push(syntheticRequest);
+    apiData.requests.push(syntheticRequest);
+    existingKeys.add(key);
+  }
+
+  return apiData;
+}

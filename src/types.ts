@@ -23,6 +23,10 @@ export interface ParsedRequest {
   path: string;
   domain: string;
   status: number;
+  /** Whether this endpoint was verified by auto-test */
+  verified?: boolean;
+  /** From OpenAPI spec rather than traffic capture */
+  fromSpec?: boolean;
 }
 
 /** Auth credentials extracted from traffic. */
@@ -63,6 +67,10 @@ export interface SkillResult {
   authHeaderCount: number;
   cookieCount: number;
   testPassed?: boolean;
+  verifiedEndpoints?: number;
+  unverifiedEndpoints?: number;
+  openApiSource?: string | null;
+  pagesCrawled?: number;
 }
 
 /** CDP network request from browser control API. */
