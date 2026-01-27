@@ -508,9 +508,9 @@ const plugin = {
           name: "unbrowse_replay",
           label: "Execute API",
           description:
-            "Execute API calls for a skill. Tries Chrome profile first (runs fetch " +
-            "inside the browser console with real cookies/session), falls back to " +
-            "stealth cloud browser if blocked. Can test all endpoints or call a specific one.",
+            "Execute API calls for a skill. Cascade: Chrome profile → direct fetch → " +
+            "auto-refresh creds (re-login or re-grab from browser) → retry. " +
+            "Can test all endpoints or call a specific one.",
           parameters: REPLAY_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
             const p = params as { service: string; endpoint?: string; body?: string; skillsDir?: string };
@@ -523,20 +523,30 @@ const plugin = {
               return { content: [{ type: "text", text: `Skill not found: ${skillDir}` }] };
             }
 
+            // Load auth state (mutable — refreshed on 401/403)
             let authHeaders: Record<string, string> = {};
             let cookies: Record<string, string> = {};
             let baseUrl = "https://api.example.com";
+            let loginConfig: {
+              loginUrl: string;
+              formFields?: Record<string, string>;
+              submitSelector?: string;
+              headers?: Record<string, string>;
+              cookies?: Array<{ name: string; value: string; domain: string }>;
+              captureUrls?: string[];
+            } | null = null;
 
-            if (existsSync(authPath)) {
+            function loadAuth() {
+              if (!existsSync(authPath)) return;
               try {
                 const auth = JSON.parse(readFileSync(authPath, "utf-8"));
                 authHeaders = auth.headers ?? {};
                 cookies = auth.cookies ?? {};
                 baseUrl = auth.baseUrl ?? baseUrl;
-              } catch {
-                return { content: [{ type: "text", text: "Failed to load auth.json" }] };
-              }
+                loginConfig = auth.loginConfig ?? null;
+              } catch { /* skip */ }
             }
+            loadAuth();
 
             // Parse endpoints from SKILL.md
             let endpoints: { method: string; path: string }[] = [];
@@ -549,13 +559,11 @@ const plugin = {
               }
             }
 
-            // If specific endpoint requested, filter to just that one
             if (p.endpoint) {
               const match = p.endpoint.match(/^(GET|POST|PUT|DELETE|PATCH)\s+(.+)$/i);
               if (match) {
                 endpoints = [{ method: match[1].toUpperCase(), path: match[2] }];
               } else {
-                // Assume it's just a path, default to GET
                 endpoints = [{ method: "GET", path: p.endpoint }];
               }
             }
@@ -564,10 +572,7 @@ const plugin = {
               return { content: [{ type: "text", text: "No endpoints found. Provide endpoint param or check SKILL.md." }] };
             }
 
-            // ── Try 1: Execute via Chrome profile (page.evaluate fetch) ──
-            const results: string[] = [];
-            let passed = 0;
-            let failed = 0;
+            // ── Execution strategies ────────────────────────────────────
 
             async function execInChrome(ep: { method: string; path: string }, body?: string): Promise<{ status: number; ok: boolean; data?: string } | null> {
               try {
@@ -583,8 +588,6 @@ const plugin = {
                 });
 
                 const page = context.pages()[0] ?? await context.newPage();
-
-                // Navigate to the base URL first so cookies are in scope
                 await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
 
                 const url = new URL(ep.path, baseUrl).toString();
@@ -597,7 +600,6 @@ const plugin = {
                   fetchOpts.body = body;
                 }
 
-                // Execute fetch inside the browser context — cookies auto-attached
                 const result = await page.evaluate(async ({ url, opts }: { url: string; opts: any }) => {
                   try {
                     const resp = await fetch(url, opts);
@@ -611,7 +613,7 @@ const plugin = {
                 await context.close();
                 return result;
               } catch {
-                return null; // Chrome not available or failed — fall through to stealth
+                return null;
               }
             }
 
@@ -631,46 +633,162 @@ const plugin = {
               return { status: resp.status, ok: resp.ok, data: text.slice(0, 2000) };
             }
 
+            // ── Credential refresh on 401/403 ──────────────────────────
+
+            let credsRefreshed = false;
+
+            async function refreshCreds(): Promise<boolean> {
+              if (credsRefreshed) return false; // only try once
+              credsRefreshed = true;
+
+              // Strategy 1: re-login if login config is stored
+              if (loginConfig) {
+                try {
+                  const result = await loginAndCapture(loginConfig.loginUrl, {
+                    formFields: loginConfig.formFields,
+                    submitSelector: loginConfig.submitSelector,
+                    headers: loginConfig.headers,
+                    cookies: loginConfig.cookies,
+                  }, {
+                    browserUseApiKey,
+                    captureUrls: loginConfig.captureUrls,
+                  });
+
+                  // Update in-memory creds
+                  authHeaders = result.authHeaders;
+                  cookies = result.cookies;
+
+                  // Persist refreshed creds to auth.json
+                  const { writeFileSync } = await import("node:fs");
+                  const existing = existsSync(authPath)
+                    ? JSON.parse(readFileSync(authPath, "utf-8"))
+                    : {};
+                  existing.headers = result.authHeaders;
+                  existing.cookies = result.cookies;
+                  existing.timestamp = new Date().toISOString();
+                  existing.refreshedAt = new Date().toISOString();
+                  writeFileSync(authPath, JSON.stringify(existing, null, 2), "utf-8");
+
+                  return true;
+                } catch {
+                  // Re-login failed — try next strategy
+                }
+              }
+
+              // Strategy 2: re-grab cookies from Chrome profile
+              try {
+                const { chromium } = await import("playwright");
+                const { homedir: getHome } = await import("node:os");
+                const profilePath = join(getHome(), "Library", "Application Support", "Google", "Chrome");
+
+                const context = await chromium.launchPersistentContext(profilePath, {
+                  channel: "chrome",
+                  headless: true,
+                  args: ["--disable-blink-features=AutomationControlled"],
+                  ignoreDefaultArgs: ["--enable-automation"],
+                });
+
+                const page = context.pages()[0] ?? await context.newPage();
+                await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+
+                // Grab fresh cookies from the browser
+                const browserCookies = await context.cookies();
+                const freshCookies: Record<string, string> = {};
+                for (const c of browserCookies) {
+                  freshCookies[c.name] = c.value;
+                }
+                await context.close();
+
+                if (Object.keys(freshCookies).length > 0) {
+                  cookies = freshCookies;
+
+                  // Persist
+                  const { writeFileSync } = await import("node:fs");
+                  const existing = existsSync(authPath)
+                    ? JSON.parse(readFileSync(authPath, "utf-8"))
+                    : {};
+                  existing.cookies = freshCookies;
+                  existing.timestamp = new Date().toISOString();
+                  existing.refreshedAt = new Date().toISOString();
+                  writeFileSync(authPath, JSON.stringify(existing, null, 2), "utf-8");
+
+                  return true;
+                }
+              } catch {
+                // Chrome not available
+              }
+
+              return false;
+            }
+
+            // ── Execute endpoints ───────────────────────────────────────
+
+            const results: string[] = [];
+            let passed = 0;
+            let failed = 0;
+
             const toTest = endpoints.slice(0, p.endpoint ? 1 : 10);
-            results.push(`Testing ${p.service} (${toTest.length} endpoint${toTest.length > 1 ? "s" : ""})`, `Base: ${baseUrl}`, "");
+            results.push(`Executing ${p.service} (${toTest.length} endpoint${toTest.length > 1 ? "s" : ""})`, `Base: ${baseUrl}`, "");
 
             for (const ep of toTest) {
               const body = p.body ?? (["POST", "PUT", "PATCH"].includes(ep.method) ? "{}" : undefined);
 
-              // Try Chrome profile first
+              // Try 1: Chrome profile (live cookies)
               let result = await execInChrome(ep, body);
-
               if (result && result.ok) {
-                results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (Chrome profile)`);
-                if (p.endpoint && result.data) {
-                  results.push(`  Response: ${result.data.slice(0, 500)}`);
-                }
+                results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (Chrome)`);
+                if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
                 passed++;
                 continue;
               }
 
-              // Chrome failed or unavailable — try direct fetch with stored auth
+              // Try 2: Direct fetch with stored auth
               try {
                 result = await execViaFetch(ep, body);
                 if (result.ok) {
                   results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (direct)`);
-                  if (p.endpoint && result.data) {
-                    results.push(`  Response: ${result.data.slice(0, 500)}`);
-                  }
+                  if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
                   passed++;
                   continue;
                 }
               } catch { /* fall through */ }
 
-              // Both failed
+              // Try 3: If 401/403, refresh creds and retry
               const status = result?.status ?? 0;
-              results.push(`  ${ep.method} ${ep.path} → ${status || "FAILED"}${status === 403 ? " (blocked — try stealth browser)" : ""}`);
-              failed++;
+              if ((status === 401 || status === 403) && !credsRefreshed) {
+                results.push(`  ${ep.method} ${ep.path} → ${status} — refreshing credentials...`);
+                const refreshed = await refreshCreds();
+                if (refreshed) {
+                  // Retry with fresh creds
+                  try {
+                    result = await execViaFetch(ep, body);
+                    if (result.ok) {
+                      results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (refreshed)`);
+                      if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
+                      passed++;
+                      continue;
+                    }
+                    results.push(`  ${ep.method} ${ep.path} → ${result.status} (still failed after refresh)`);
+                  } catch {
+                    results.push(`  ${ep.method} ${ep.path} → FAILED after refresh`);
+                  }
+                } else {
+                  results.push(`  Credential refresh unavailable — no loginConfig in auth.json and no Chrome profile`);
+                }
+                failed++;
+              } else {
+                // Not a 401/403, or already tried refresh
+                results.push(`  ${ep.method} ${ep.path} → ${status || "FAILED"}`);
+                failed++;
+              }
             }
 
             results.push("", `Results: ${passed} passed, ${failed} failed`);
-            if (failed > 0 && browserUseApiKey) {
-              results.push(`Tip: blocked endpoints may work via unbrowse_stealth`);
+            if (credsRefreshed) {
+              results.push(`Credentials were refreshed and saved to auth.json`);
+            }
+            if (failed > 0 && !credsRefreshed && !loginConfig) {
+              results.push(`Tip: use unbrowse_login to store login credentials for auto-refresh on expiry`);
             }
             return { content: [{ type: "text", text: results.join("\n") }] };
           },
@@ -1107,7 +1225,7 @@ const plugin = {
               const skillDir = join(defaultOutputDir, service);
               mkdirSync(join(skillDir, "scripts"), { recursive: true });
 
-              const authData = {
+              const authData: Record<string, unknown> = {
                 service,
                 baseUrl: result.baseUrl,
                 authMethod: Object.keys(result.authHeaders).length > 0 ? "header" : "cookie",
@@ -1115,6 +1233,18 @@ const plugin = {
                 headers: result.authHeaders,
                 cookies: result.cookies,
               };
+
+              // Store login config so replay can re-login when creds expire
+              if (p.formFields || p.headers || p.cookies) {
+                authData.loginConfig = {
+                  loginUrl: p.loginUrl,
+                  ...(p.formFields ? { formFields: p.formFields } : {}),
+                  ...(p.submitSelector ? { submitSelector: p.submitSelector } : {}),
+                  ...(p.headers ? { headers: p.headers } : {}),
+                  ...(p.cookies ? { cookies: p.cookies } : {}),
+                  ...(p.captureUrls ? { captureUrls: p.captureUrls } : {}),
+                };
+              }
               writeFileSync(join(skillDir, "auth.json"), JSON.stringify(authData, null, 2), "utf-8");
 
               // If we captured enough API traffic, generate a skill too
