@@ -19,6 +19,22 @@
     "autoDiscover": {
       "label": "Auto-Discover Skills",
       "help": "Automatically generate skills when the agent browses APIs (default: true)"
+    },
+    "skillIndexUrl": {
+      "label": "Skill Index URL",
+      "help": "Cloud skill marketplace API URL",
+      "placeholder": "https://skills.unbrowse.ai"
+    },
+    "creatorWallet": {
+      "label": "Creator Wallet (EVM)",
+      "help": "Your 0x wallet address for receiving USDC when others download your skills",
+      "placeholder": "0x..."
+    },
+    "skillIndexEvmPrivateKey": {
+      "label": "Payment Private Key",
+      "help": "EVM private key for paying x402 USDC when downloading skills from the index",
+      "sensitive": true,
+      "placeholder": "0x..."
     }
   },
   "configSchema": {
@@ -28,7 +44,10 @@
       "skillsOutputDir": { "type": "string" },
       "browserPort": { "type": "number", "default": 18791 },
       "browserUseApiKey": { "type": "string" },
-      "autoDiscover": { "type": "boolean", "default": true }
+      "autoDiscover": { "type": "boolean", "default": true },
+      "skillIndexUrl": { "type": "string", "default": "https://skills.unbrowse.ai" },
+      "creatorWallet": { "type": "string" },
+      "skillIndexEvmPrivateKey": { "type": "string" }
     }
   }
 }
