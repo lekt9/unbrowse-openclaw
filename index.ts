@@ -12,6 +12,7 @@
  *   unbrowse_replay    — Test discovered endpoints with extracted auth
  *   unbrowse_stealth   — Launch stealth cloud browser (Browser Use)
  *   unbrowse_skills    — List all auto-discovered skills
+ *   unbrowse_login     — Log in with credentials via stealth browser (Docker/cloud)
  *   unbrowse_publish   — Publish skill to cloud index (earn USDC via x402)
  *   unbrowse_search    — Search & install skills from the cloud index
  *
@@ -37,6 +38,7 @@ import {
 } from "./src/stealth-browser.js";
 import { SkillIndexClient, type PublishPayload } from "./src/skill-index.js";
 import { sanitizeApiTemplate, extractEndpoints, extractPublishableAuth } from "./src/skill-sanitizer.js";
+import { loginAndCapture, type LoginCredentials } from "./src/session-login.js";
 
 // ── Tool Schemas ──────────────────────────────────────────────────────────────
 
@@ -188,6 +190,59 @@ const SEARCH_SCHEMA = {
     },
   },
   required: [] as string[],
+};
+
+const LOGIN_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    loginUrl: {
+      type: "string" as const,
+      description: "URL of the login page to navigate to",
+    },
+    service: {
+      type: "string" as const,
+      description: "Service name for the skill (auto-detected from domain if omitted)",
+    },
+    formFields: {
+      type: "object" as const,
+      description:
+        'CSS selector → value pairs for form fields. e.g. {"#email": "user@example.com", "#password": "secret"}. ' +
+        "Use CSS selectors that target the input elements.",
+      additionalProperties: { type: "string" as const },
+    },
+    submitSelector: {
+      type: "string" as const,
+      description: 'CSS selector for the submit button (default: auto-detect). e.g. "button[type=submit]"',
+    },
+    headers: {
+      type: "object" as const,
+      description: "Headers to inject on all requests (e.g. API key auth). These are set before navigation.",
+      additionalProperties: { type: "string" as const },
+    },
+    cookies: {
+      type: "array" as const,
+      items: {
+        type: "object" as const,
+        properties: {
+          name: { type: "string" as const },
+          value: { type: "string" as const },
+          domain: { type: "string" as const },
+        },
+        required: ["name", "value", "domain"],
+      },
+      description: "Pre-set cookies to inject before navigating (e.g. existing session tokens)",
+    },
+    captureUrls: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description: "Additional URLs to visit after login to capture API traffic for skill generation",
+    },
+    proxyCountry: {
+      type: "string" as const,
+      description: "Proxy country code for stealth browser (e.g., US, GB). Only used with BrowserBase.",
+    },
+  },
+  required: ["loginUrl"],
 };
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
@@ -996,6 +1051,120 @@ const plugin = {
             }
           },
         },
+        // ── unbrowse_login ─────────────────────────────────────────────
+        {
+          name: "unbrowse_login",
+          label: "Login & Capture Session",
+          description:
+            "Log in to a website with credentials and capture the session (cookies, auth headers, API traffic). " +
+            "Works in Docker/cloud where there's no Chrome profile. Uses stealth cloud browser (BrowserBase) " +
+            "if configured, otherwise local Playwright. Provide form fields to auto-fill login forms, " +
+            "or inject headers/cookies directly. Captured session is saved to auth.json for the skill.",
+          parameters: LOGIN_SCHEMA,
+          async execute(_toolCallId: string, params: unknown) {
+            const p = params as {
+              loginUrl: string;
+              service?: string;
+              formFields?: Record<string, string>;
+              submitSelector?: string;
+              headers?: Record<string, string>;
+              cookies?: Array<{ name: string; value: string; domain: string }>;
+              captureUrls?: string[];
+              proxyCountry?: string;
+            };
+
+            // Derive service name from URL if not provided
+            let service = p.service;
+            if (!service) {
+              try {
+                const host = new URL(p.loginUrl).hostname;
+                service = host
+                  .replace(/^(www|api|app|auth|login)\./, "")
+                  .replace(/\.(com|io|org|net|dev|co|ai)$/, "")
+                  .replace(/\./g, "-");
+              } catch {
+                return { content: [{ type: "text", text: "Invalid login URL." }] };
+              }
+            }
+
+            const credentials: LoginCredentials = {
+              formFields: p.formFields,
+              submitSelector: p.submitSelector,
+              headers: p.headers,
+              cookies: p.cookies,
+            };
+
+            try {
+              const result = await loginAndCapture(p.loginUrl, credentials, {
+                browserUseApiKey,
+                captureUrls: p.captureUrls,
+                waitMs: 5000,
+                proxyCountry: p.proxyCountry,
+              });
+
+              // Save auth.json
+              const { mkdirSync, writeFileSync } = await import("node:fs");
+              const skillDir = join(defaultOutputDir, service);
+              mkdirSync(join(skillDir, "scripts"), { recursive: true });
+
+              const authData = {
+                service,
+                baseUrl: result.baseUrl,
+                authMethod: Object.keys(result.authHeaders).length > 0 ? "header" : "cookie",
+                timestamp: new Date().toISOString(),
+                headers: result.authHeaders,
+                cookies: result.cookies,
+              };
+              writeFileSync(join(skillDir, "auth.json"), JSON.stringify(authData, null, 2), "utf-8");
+
+              // If we captured enough API traffic, generate a skill too
+              let skillGenerated = false;
+              if (result.requestCount > 5) {
+                try {
+                  const apiData = parseHar(result.har);
+                  // Merge captured cookies into apiData
+                  for (const [name, value] of Object.entries(result.cookies)) {
+                    if (!apiData.cookies[name]) apiData.cookies[name] = value;
+                  }
+                  await generateSkill(apiData, defaultOutputDir);
+                  discovery.markLearned(service);
+                  skillGenerated = true;
+                } catch {
+                  // Skill generation is optional — session capture is the main goal
+                }
+              }
+
+              const backend = browserUseApiKey ? "stealth cloud (BrowserBase)" : "local Playwright";
+              const summary = [
+                `Session captured via ${backend}`,
+                `Service: ${service}`,
+                `Cookies: ${Object.keys(result.cookies).length}`,
+                `Auth headers: ${Object.keys(result.authHeaders).length}`,
+                `Network requests: ${result.requestCount}`,
+                `Base URL: ${result.baseUrl}`,
+                `Auth saved: ${join(skillDir, "auth.json")}`,
+                skillGenerated ? `Skill generated with ${result.requestCount} captured requests` : "",
+                "",
+                `The session is ready. Use unbrowse_replay to execute API calls with these credentials.`,
+                !skillGenerated && (p.captureUrls?.length ?? 0) === 0
+                  ? `Tip: add captureUrls to visit authenticated pages and auto-generate a skill.`
+                  : "",
+              ].filter(Boolean).join("\n");
+
+              logger.info(`[unbrowse] Login capture → ${service} (${Object.keys(result.cookies).length} cookies, ${result.requestCount} requests)`);
+              return { content: [{ type: "text", text: summary }] };
+            } catch (err) {
+              const msg = (err as Error).message;
+              if (msg.includes("playwright")) {
+                return { content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }] };
+              }
+              if (msg.includes("Browser Use")) {
+                return { content: [{ type: "text", text: `Stealth browser failed: ${msg}. Check browserUseApiKey config or try without it.` }] };
+              }
+              return { content: [{ type: "text", text: `Login capture failed: ${msg}` }] };
+            }
+          },
+        },
       ];
 
       return toolList;
@@ -1010,6 +1179,7 @@ const plugin = {
       "unbrowse_skills",
       "unbrowse_publish",
       "unbrowse_search",
+      "unbrowse_login",
     ];
 
     api.registerTool(tools, { names: toolNames });
