@@ -66,6 +66,23 @@ const CAPTURE_SCHEMA = {
       type: "string" as const,
       description: "Directory to save generated skill (default: ~/.clawdbot/skills)",
     },
+    profile: {
+      type: "string" as const,
+      enum: ["browser", "chrome"],
+      description:
+        "Capture source. 'browser': clawdbot's managed browser (default). " +
+        "'chrome': launch Chrome with user's real profile (cookies, sessions, extensions). " +
+        "Chrome must be closed when using 'chrome' mode.",
+    },
+    urls: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description: "URLs to visit when using 'chrome' profile mode. Chrome navigates to each and captures all traffic.",
+    },
+    waitMs: {
+      type: "number" as const,
+      description: "How long to wait on each page for network activity in ms (default: 5000). Chrome profile mode only.",
+    },
   },
   required: [] as string[],
 };
@@ -269,12 +286,67 @@ const plugin = {
           name: "unbrowse_capture",
           label: "Capture from Browser",
           description:
-            "Capture network traffic from the current browser session and generate " +
-            "a skill. Browser must be open with pages visited.",
+            "Capture network traffic and generate a skill. Two modes:\n" +
+            "- Default (profile=browser): capture from clawdbot's managed browser session.\n" +
+            "- Chrome (profile=chrome): launch Chrome with user's real profile (cookies, sessions, " +
+            "extensions all available). Provide urls to visit. Full headers captured directly via Playwright.",
           parameters: CAPTURE_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
-            const p = params as { outputDir?: string };
+            const p = params as {
+              outputDir?: string;
+              profile?: "browser" | "chrome";
+              urls?: string[];
+              waitMs?: number;
+            };
 
+            // ── Chrome profile mode ──
+            if (p.profile === "chrome") {
+              if (!p.urls || p.urls.length === 0) {
+                return { content: [{ type: "text", text: "Chrome profile mode requires urls to visit. Provide at least one URL." }] };
+              }
+
+              try {
+                const { captureFromChromeProfile } = await import("./src/profile-capture.js");
+                const { har, cookies, requestCount } = await captureFromChromeProfile(p.urls, {
+                  waitMs: p.waitMs,
+                });
+
+                if (requestCount === 0) {
+                  return { content: [{ type: "text", text: "No API requests captured. The pages may not make API calls, or try waiting longer (waitMs)." }] };
+                }
+
+                const apiData = parseHar(har);
+                for (const [name, value] of Object.entries(cookies)) {
+                  if (!apiData.cookies[name]) apiData.cookies[name] = value;
+                }
+
+                const result = await generateSkill(apiData, p.outputDir ?? defaultOutputDir);
+                discovery.markLearned(result.service);
+
+                const summary = [
+                  `Chrome profile capture: ${requestCount} requests from ${p.urls.length} page(s)`,
+                  `Skill: ${result.service}`,
+                  `Auth: ${result.authMethod}`,
+                  `Endpoints: ${result.endpointCount}`,
+                  `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
+                  `Installed: ${result.skillDir}`,
+                ].join("\n");
+
+                logger.info(`[unbrowse] Chrome profile capture → ${result.service} (${result.endpointCount} endpoints)`);
+                return { content: [{ type: "text", text: summary }] };
+              } catch (err) {
+                const msg = (err as Error).message;
+                if (msg.includes("Target page, context or browser has been closed")) {
+                  return { content: [{ type: "text", text: "Chrome is already running. Close Chrome first, then retry. Only one instance can use the profile." }] };
+                }
+                if (msg.includes("playwright")) {
+                  return { content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }] };
+                }
+                return { content: [{ type: "text", text: `Chrome capture failed: ${msg}` }] };
+              }
+            }
+
+            // ── Default: clawdbot browser mode ──
             try {
               const { har, cookies, requestCount } = await captureFromBrowser(browserPort);
 
@@ -303,7 +375,7 @@ const plugin = {
             } catch (err) {
               const msg = (err as Error).message;
               if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
-                return { content: [{ type: "text", text: `Browser not running on port ${browserPort}. Start browser first.` }] };
+                return { content: [{ type: "text", text: `Browser not running on port ${browserPort}. Start browser first, or use profile=chrome to capture with your real Chrome.` }] };
               }
               return { content: [{ type: "text", text: `Capture failed: ${msg}` }] };
             }
