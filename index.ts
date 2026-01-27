@@ -1,21 +1,19 @@
 /**
  * Unbrowse — Self-learning API skill generator.
  *
- * Captures APIs directly from Chrome using the user's real browser profile.
- * No browser extension needed — Playwright launches Chrome with the user's
- * cookies, sessions, and logged-in state to capture all network traffic.
- *
- * Generates complete skill packages (SKILL.md, auth.json, TypeScript API
- * client) and auto-refreshes credentials when they expire.
+ * Just provide URLs and the tool automatically launches a browser, visits
+ * the pages, and captures all API traffic. No extension, no manual Chrome
+ * steps needed. Generates complete skill packages (SKILL.md, auth.json,
+ * TypeScript API client).
  *
  * Tools:
- *   unbrowse_capture   — Launch Chrome with real profile, visit URLs, capture API traffic
- *   unbrowse_replay    — Execute API calls (Chrome → direct fetch → auto-refresh on 401)
- *   unbrowse_login     — Log in with credentials via Playwright/stealth (Docker/cloud)
+ *   unbrowse_capture   — Provide URLs → auto-launches browser → captures all API traffic
+ *   unbrowse_replay    — Execute API calls with stored credentials (auto-refresh on 401)
+ *   unbrowse_login     — Log in with credentials via Playwright/stealth (for auth-required sites)
  *   unbrowse_learn     — Parse a HAR file → generate skill
  *   unbrowse_skills    — List all discovered skills
  *   unbrowse_stealth   — Launch stealth cloud browser (BrowserBase)
- *   unbrowse_auth      — Extract auth from clawdbot's managed browser (legacy)
+ *   unbrowse_auth      — Extract auth from a running browser via CDP (low-level)
  *   unbrowse_publish   — Publish skill to cloud index (earn USDC via x402)
  *   unbrowse_search    — Search & install skills from the cloud index
  *
@@ -30,7 +28,7 @@ import { homedir } from "node:os";
 
 import { parseHar } from "./src/har-parser.js";
 import { generateSkill } from "./src/skill-generator.js";
-import { captureFromBrowser, fetchBrowserCookies, fetchCapturedRequests } from "./src/cdp-capture.js";
+import { fetchBrowserCookies, fetchCapturedRequests } from "./src/cdp-capture.js";
 import { AutoDiscovery } from "./src/auto-discover.js";
 import {
   createStealthSession,
@@ -67,29 +65,21 @@ const LEARN_SCHEMA = {
 const CAPTURE_SCHEMA = {
   type: "object" as const,
   properties: {
-    outputDir: {
-      type: "string" as const,
-      description: "Directory to save generated skill (default: ~/.clawdbot/skills)",
-    },
-    profile: {
-      type: "string" as const,
-      enum: ["chrome", "browser"],
-      description:
-        "Capture source. 'chrome' (default): launch Chrome with user's real profile — " +
-        "all cookies, sessions, and logged-in state available. Requires Chrome to be closed. " +
-        "'browser': capture from clawdbot's managed browser (rarely needed).",
-    },
     urls: {
       type: "array" as const,
       items: { type: "string" as const },
-      description: "URLs to visit. Chrome navigates to each and captures all API traffic. Required for chrome mode.",
+      description: "URLs to visit and capture API traffic from. The tool launches a browser automatically — just provide URLs.",
+    },
+    outputDir: {
+      type: "string" as const,
+      description: "Directory to save generated skill (default: ~/.clawdbot/skills)",
     },
     waitMs: {
       type: "number" as const,
       description: "How long to wait on each page for network activity in ms (default: 5000).",
     },
   },
-  required: [] as string[],
+  required: ["urls"],
 };
 
 const AUTH_SCHEMA = {
@@ -254,10 +244,10 @@ const plugin = {
   id: "unbrowse",
   name: "Unbrowse",
   description:
-    "Self-learning API skill generator. Captures APIs directly from Chrome using the user's " +
-    "real browser profile (cookies, sessions, logged-in state). No browser extension needed — " +
-    "uses Playwright to launch Chrome with the user's profile and capture all network traffic. " +
-    "Falls back to stealth cloud browsers or credential-based login for Docker/cloud environments.",
+    "Self-learning API skill generator. Just provide URLs and the tool automatically launches " +
+    "a browser, visits the pages, and captures all API traffic — no manual steps, no extension, " +
+    "no Chrome needed. Generates complete skill packages (SKILL.md, auth.json, TypeScript client). " +
+    "For authenticated/logged-in sites, use unbrowse_login to capture a session first.",
 
   register(api: ClawdbotPluginApi) {
     const cfg = api.pluginConfig ?? {};
@@ -352,79 +342,33 @@ const plugin = {
         // ── unbrowse_capture ────────────────────────────────────────
         {
           name: "unbrowse_capture",
-          label: "Capture from Chrome",
+          label: "Capture APIs",
           description:
-            "Capture API traffic using Chrome with the user's real profile. All cookies, " +
-            "sessions, and logged-in state are available — no extension needed. Provide URLs to visit " +
-            "and Playwright captures all network requests directly. Generates a complete skill package. " +
-            "Works whether Chrome is open or closed (auto-detects and connects via CDP or launches). " +
-            "Use profile=browser only if connecting to clawdbot's managed browser.",
+            "Capture API traffic from any website. Just provide URLs — the tool automatically " +
+            "launches a browser, visits each page, and captures all network requests. No extension, " +
+            "no manual Chrome steps. Generates a complete skill package. " +
+            "For sites that require login, use unbrowse_login first to establish a session.",
           parameters: CAPTURE_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
             const p = params as {
               outputDir?: string;
-              profile?: "browser" | "chrome";
-              urls?: string[];
+              urls: string[];
               waitMs?: number;
             };
 
-            // Default to chrome profile mode
-            const profile = p.profile ?? (p.urls?.length ? "chrome" : "browser");
-
-            // ── Chrome profile mode ──
-            if (profile === "chrome") {
-              if (!p.urls || p.urls.length === 0) {
-                return { content: [{ type: "text", text: "Chrome profile mode requires urls to visit. Provide at least one URL." }] };
-              }
-
-              try {
-                const { captureFromChromeProfile } = await import("./src/profile-capture.js");
-                const { har, cookies, requestCount, method } = await captureFromChromeProfile(p.urls, {
-                  waitMs: p.waitMs,
-                  browserPort,
-                });
-
-                if (requestCount === 0) {
-                  return { content: [{ type: "text", text: "No API requests captured. The pages may not make API calls, or try waiting longer (waitMs)." }] };
-                }
-
-                const apiData = parseHar(har);
-                for (const [name, value] of Object.entries(cookies)) {
-                  if (!apiData.cookies[name]) apiData.cookies[name] = value;
-                }
-
-                const result = await generateSkill(apiData, p.outputDir ?? defaultOutputDir);
-                discovery.markLearned(result.service);
-
-                const summary = [
-                  `Chrome capture (${method}): ${requestCount} requests from ${p.urls.length} page(s)`,
-                  `Skill: ${result.service}`,
-                  `Auth: ${result.authMethod}`,
-                  `Endpoints: ${result.endpointCount}`,
-                  `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
-                  `Installed: ${result.skillDir}`,
-                ].join("\n");
-
-                logger.info(`[unbrowse] Chrome profile capture → ${result.service} (${result.endpointCount} endpoints)`);
-                return { content: [{ type: "text", text: summary }] };
-              } catch (err) {
-                const msg = (err as Error).message;
-                if (msg.includes("Target page, context or browser has been closed")) {
-                  return { content: [{ type: "text", text: "Browser context closed unexpectedly. Try again." }] };
-                }
-                if (msg.includes("playwright")) {
-                  return { content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }] };
-                }
-                return { content: [{ type: "text", text: `Chrome capture failed: ${msg}` }] };
-              }
+            if (!p.urls || p.urls.length === 0) {
+              return { content: [{ type: "text", text: "Provide at least one URL to capture." }] };
             }
 
-            // ── Default: clawdbot browser mode ──
             try {
-              const { har, cookies, requestCount } = await captureFromBrowser(browserPort);
+              const { captureFromChromeProfile } = await import("./src/profile-capture.js");
+              const { har, cookies, requestCount, method } = await captureFromChromeProfile(p.urls, {
+                waitMs: p.waitMs,
+                browserPort,
+              });
 
               if (requestCount === 0) {
-                return { content: [{ type: "text", text: "No requests captured. Open browser and visit pages first." }] };
+                return { content: [{ type: "text", text: "No API requests captured. The pages may not make API calls, or try waiting longer (waitMs)." }] };
               }
 
               const apiData = parseHar(har);
@@ -436,19 +380,23 @@ const plugin = {
               discovery.markLearned(result.service);
 
               const summary = [
-                `Captured ${requestCount} requests`,
+                `Captured (${method}): ${requestCount} requests from ${p.urls.length} page(s)`,
                 `Skill: ${result.service}`,
                 `Auth: ${result.authMethod}`,
                 `Endpoints: ${result.endpointCount}`,
+                `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
                 `Installed: ${result.skillDir}`,
               ].join("\n");
 
-              logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints)`);
+              logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints, via ${method})`);
               return { content: [{ type: "text", text: summary }] };
             } catch (err) {
               const msg = (err as Error).message;
-              if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
-                return { content: [{ type: "text", text: `Browser not running on port ${browserPort}. Start browser first, or use profile=chrome to capture with your real Chrome.` }] };
+              if (msg.includes("Target page, context or browser has been closed")) {
+                return { content: [{ type: "text", text: "Browser context closed unexpectedly. Try again." }] };
+              }
+              if (msg.includes("playwright")) {
+                return { content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }] };
               }
               return { content: [{ type: "text", text: `Capture failed: ${msg}` }] };
             }
@@ -460,9 +408,9 @@ const plugin = {
           name: "unbrowse_auth",
           label: "Extract Auth",
           description:
-            "Extract auth credentials (cookies, headers, tokens) from clawdbot's managed browser. " +
-            "For most use cases, prefer unbrowse_capture (uses Chrome profile directly) or " +
-            "unbrowse_login (credential-based login for Docker/cloud).",
+            "Extract auth credentials (cookies, headers, tokens) from a running browser via CDP. " +
+            "For most use cases, prefer unbrowse_capture (just provide URLs) or " +
+            "unbrowse_login (credential-based login). This is a low-level tool.",
           parameters: AUTH_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
             const p = params as { domain?: string };
@@ -520,10 +468,9 @@ const plugin = {
           name: "unbrowse_replay",
           label: "Execute API",
           description:
-            "Execute API calls using a skill's stored credentials. Cascade: " +
-            "1) Run fetch inside Chrome with real cookies/session, " +
-            "2) Direct fetch with stored auth headers, " +
-            "3) On 401/403 — auto-refresh creds by re-logging in or re-grabbing from Chrome, then retry. " +
+            "Execute API calls using a skill's stored credentials. Automatically tries " +
+            "direct fetch with stored auth headers/cookies. On 401/403, auto-refreshes " +
+            "credentials by re-logging in (if loginConfig saved) and retries. " +
             "Can test all endpoints or call a specific one.",
           parameters: REPLAY_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
