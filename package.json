@@ -1,0 +1,14 @@
+{
+  "name": "unbrowse",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Unbrowse — learn APIs from HAR files or live browser sessions, generate skills automatically",
+  "clawdbot": {
+    "extensions": ["./index.ts"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "clawdbot": "*",
+    "typescript": "^5.7.0"
+  }
+}

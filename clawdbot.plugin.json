@@ -1,0 +1,34 @@
+{
+  "id": "unbrowse",
+  "uiHints": {
+    "skillsOutputDir": {
+      "label": "Skills Output Directory",
+      "help": "Where generated skills are saved",
+      "placeholder": "~/.clawdbot/skills"
+    },
+    "browserPort": {
+      "label": "Browser Control Port",
+      "help": "Port for browser CDP control API (default: 18791)"
+    },
+    "browserUseApiKey": {
+      "label": "Browser Use API Key",
+      "help": "API key for stealth cloud browsers (browser-use.com). Enables unbrowse_stealth tool.",
+      "sensitive": true,
+      "placeholder": "bu_..."
+    },
+    "autoDiscover": {
+      "label": "Auto-Discover Skills",
+      "help": "Automatically generate skills when the agent browses APIs (default: true)"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "skillsOutputDir": { "type": "string" },
+      "browserPort": { "type": "number", "default": 18791 },
+      "browserUseApiKey": { "type": "string" },
+      "autoDiscover": { "type": "boolean", "default": true }
+    }
+  }
+}

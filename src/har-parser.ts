@@ -1,0 +1,211 @@
+/**
+ * HAR Parser — Extract API endpoints and metadata from HAR files.
+ *
+ * Ported from meta_learner_simple.py parse_har() + group_by_domain_and_path().
+ */
+
+import type { HarEntry, ParsedRequest, ApiData } from "./types.js";
+import { guessAuthMethod } from "./auth-extractor.js";
+
+/** Static asset extensions to skip. */
+const STATIC_EXTS = [".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff", ".woff2", ".ico", ".map"];
+
+/** Third-party domains to skip (analytics, payments, social, etc.). */
+const SKIP_DOMAINS = [
+  "google-analytics.com", "analytics.google.com", "www.google-analytics.com",
+  "mixpanel.com", "api-js.mixpanel.com",
+  "stripe.com", "js.stripe.com", "r.stripe.com", "m.stripe.com",
+  "intercom.io", "api-iam.intercom.io",
+  "facebook.com", "instagram.com", "connect.facebook.net",
+  "doubleclick.net", "googletagmanager.com", "googlesyndication.com",
+  "hotjar.com", "clarity.ms", "sentry.io",
+  "cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com",
+];
+
+/** Auth header names to capture. */
+const AUTH_HEADER_NAMES = new Set([
+  "authorization", "x-api-key", "api-key", "apikey",
+  "x-auth-token", "access-token", "x-access-token",
+  "token", "x-token", "authtype", "mudra",
+]);
+
+/** Context header names to capture (IDs, tenant info). */
+const CONTEXT_HEADER_NAMES = new Set([
+  "outletid", "userid", "supplierid", "companyid",
+]);
+
+/** Check if a URL is a static asset. */
+function isStaticAsset(url: string): boolean {
+  const path = new URL(url).pathname.toLowerCase();
+  return STATIC_EXTS.some((ext) => path.endsWith(ext));
+}
+
+/** Check if a domain should be skipped (third-party). */
+function isSkippedDomain(domain: string): boolean {
+  return SKIP_DOMAINS.some((skip) => domain.includes(skip));
+}
+
+/** Check if a URL looks like an API call. */
+function isApiLike(url: string, method: string, domain: string): boolean {
+  return (
+    url.includes("/api/") ||
+    url.includes("/services/") ||
+    url.includes("/v1/") ||
+    url.includes("/v2/") ||
+    url.includes("/v3/") ||
+    url.includes("/graphql") ||
+    ["POST", "PUT", "DELETE", "PATCH"].includes(method) ||
+    // Allow any non-static on target domains that passed third-party filter
+    domain.includes("api.") ||
+    domain.includes("service")
+  );
+}
+
+/** Group requests by domain:path. */
+function groupByDomainAndPath(requests: ParsedRequest[]): Record<string, ParsedRequest[]> {
+  const grouped: Record<string, ParsedRequest[]> = {};
+  for (const req of requests) {
+    const key = `${req.domain}:${req.path}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(req);
+  }
+  return grouped;
+}
+
+/** Derive a clean service name from a domain. */
+function deriveServiceName(domain: string): string {
+  let name = domain
+    .replace(/^(www|api|v\d+|.*serv)\./, "")
+    .replace(/\.(com|org|net|co|io|ai|app|sg|dev|xyz)\.?$/g, "")
+    .replace(/\./g, "-")
+    .toLowerCase();
+  return name || "unknown-api";
+}
+
+/**
+ * Parse a HAR file or HAR JSON object into structured API data.
+ *
+ * Filters out static assets and third-party domains, extracts auth
+ * headers/cookies, groups endpoints, and determines the service name.
+ */
+export function parseHar(har: { log: { entries: HarEntry[] } }): ApiData {
+  const requests: ParsedRequest[] = [];
+  const authHeaders: Record<string, string> = {};
+  const cookies: Record<string, string> = {};
+  const authInfo: Record<string, string> = {};
+  const baseUrls = new Set<string>();
+  const targetDomains = new Set<string>();
+
+  for (const entry of har.log?.entries ?? []) {
+    const url = entry.request.url;
+    const method = entry.request.method;
+    const responseStatus = entry.response?.status ?? 0;
+
+    // Skip static assets
+    try {
+      if (isStaticAsset(url)) continue;
+    } catch {
+      continue; // Invalid URL
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      continue;
+    }
+
+    const domain = parsed.host;
+
+    // Skip third-party
+    if (isSkippedDomain(domain)) continue;
+
+    // Only keep API-like requests (or allow all if on a known target domain)
+    if (!isApiLike(url, method, domain) && targetDomains.size > 0 && !targetDomains.has(domain)) {
+      continue;
+    }
+
+    targetDomains.add(domain);
+    baseUrls.add(`${parsed.protocol}//${parsed.host}`);
+
+    // Extract auth headers
+    for (const header of entry.request.headers ?? []) {
+      const name = header.name.toLowerCase();
+      const value = header.value;
+
+      if (AUTH_HEADER_NAMES.has(name)) {
+        authHeaders[name] = value;
+        authInfo[`request_header_${name}`] = value;
+      }
+
+      if (CONTEXT_HEADER_NAMES.has(name)) {
+        authInfo[`request_header_${name}`] = value;
+      }
+    }
+
+    // Extract request cookies
+    for (const cookie of entry.request.cookies ?? []) {
+      cookies[cookie.name] = cookie.value;
+      authInfo[`request_cookie_${cookie.name}`] = cookie.value;
+    }
+
+    // Extract response set-cookie
+    for (const header of entry.response?.headers ?? []) {
+      if (header.name.toLowerCase() === "set-cookie") {
+        for (const part of header.value.split(",")) {
+          const eq = part.indexOf("=");
+          if (eq > 0) {
+            let cookieName = part.slice(0, eq).trim();
+            const semi = cookieName.indexOf(";");
+            if (semi > 0) cookieName = cookieName.slice(0, semi).trim();
+            if (cookieName) {
+              const cookieValue = part.slice(eq + 1, eq + 201);
+              authInfo[`response_setcookie_${cookieName}`] = cookieValue;
+            }
+          }
+        }
+      }
+    }
+
+    requests.push({
+      method,
+      url,
+      path: parsed.pathname,
+      domain,
+      status: responseStatus,
+    });
+  }
+
+  // Determine service name from most common target domain
+  let service = "unknown-api";
+  let baseUrl = "https://api.example.com";
+
+  if (targetDomains.size > 0) {
+    const domainCounts: Record<string, number> = {};
+    for (const req of requests) {
+      domainCounts[req.domain] = (domainCounts[req.domain] ?? 0) + 1;
+    }
+    const mainDomain = Object.entries(domainCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (mainDomain) {
+      service = deriveServiceName(mainDomain);
+      baseUrl = `https://${mainDomain}`;
+    }
+  } else if (baseUrls.size > 0) {
+    const first = [...baseUrls][0];
+    const domain = new URL(first).host;
+    service = deriveServiceName(domain);
+    baseUrl = first;
+  }
+
+  return {
+    service,
+    baseUrls: [...baseUrls],
+    baseUrl,
+    authHeaders,
+    authMethod: guessAuthMethod(authHeaders, cookies),
+    cookies,
+    authInfo,
+    requests,
+    endpoints: groupByDomainAndPath(requests),
+  };
+}

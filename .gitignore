@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.js
+*.js.map
+*.d.ts
+!clawdbot.plugin.json
+.DS_Store
