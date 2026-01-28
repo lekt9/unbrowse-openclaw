@@ -575,11 +575,23 @@ const plugin = {
 
       const { chromium } = await import("playwright");
 
-      // Strategy 1: Connect to clawdbot's managed browser (port 18791)
-      let browser = await tryCdpConnect(chromium, browserPort);
-      let method: BrowserSession["method"] = "cdp-clawdbot";
+      // Strategy 1: Connect to Chrome extension relay (port 18792) — user's actual Chrome with auto-attach
+      let browser = await tryCdpConnect(chromium, 18792);
+      let method: BrowserSession["method"] = "cdp-chrome";
 
-      // Strategy 2: Connect to Chrome with remote debugging ports
+      // Strategy 2: Connect to clawd managed browser (port 18800) — has persistent user-data
+      if (!browser) {
+        browser = await tryCdpConnect(chromium, 18800);
+        method = "cdp-clawdbot";
+      }
+
+      // Strategy 3: Connect to browser control server's default (port 18791 forwards to active profile)
+      if (!browser) {
+        browser = await tryCdpConnect(chromium, browserPort);
+        method = "cdp-clawdbot";
+      }
+
+      // Strategy 4: Connect to Chrome with other remote debugging ports
       if (!browser) {
         for (const port of [9222, 9229]) {
           browser = await tryCdpConnect(chromium, port);
@@ -590,7 +602,94 @@ const plugin = {
         }
       }
 
-      // Strategy 3: Fall back to fresh Playwright Chromium
+      // Strategy 5: Launch Chrome with user's profile (has all their sessions)
+      if (!browser) {
+        const chromeUserDataDir = join(homedir(), "Library/Application Support/Google/Chrome");
+
+        // Detect last used profile from Chrome's Local State
+        let profileDir = "Default";
+        try {
+          const localStatePath = join(chromeUserDataDir, "Local State");
+          if (existsSync(localStatePath)) {
+            const localState = JSON.parse(readFileSync(localStatePath, "utf-8"));
+            const lastUsed = localState?.profile?.last_used;
+            if (lastUsed && typeof lastUsed === "string") {
+              profileDir = lastUsed;
+              logger.info(`[unbrowse] Detected last used Chrome profile: ${profileDir}`);
+            }
+          }
+        } catch { /* use Default */ }
+
+        if (existsSync(chromeUserDataDir)) {
+          try {
+            const persistentContext = await chromium.launchPersistentContext(chromeUserDataDir, {
+              channel: "chrome",
+              headless: false,
+              args: [
+                `--profile-directory=${profileDir}`,
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run",
+                "--no-default-browser-check",
+              ],
+            });
+
+            const page = persistentContext.pages()[0] ?? await persistentContext.newPage();
+            const session: BrowserSession = {
+              browser: persistentContext,
+              context: persistentContext,
+              page,
+              service,
+              lastUsed: new Date(),
+              method: "cdp-chrome",
+            };
+            browserSessions.set(service, session);
+            logger.info(`[unbrowse] Launched Chrome with user profile for ${service}`);
+            return session;
+          } catch (err) {
+            // Profile likely locked - try quitting Chrome first
+            const errMsg = (err as Error).message;
+            if (errMsg.includes("lock") || errMsg.includes("already running") || errMsg.includes("SingletonLock")) {
+              logger.info(`[unbrowse] Chrome is running, attempting to quit it...`);
+              try {
+                const { execSync } = await import("node:child_process");
+                // Gracefully quit Chrome on macOS
+                execSync(`osascript -e 'tell application "Google Chrome" to quit' 2>/dev/null || true`, { timeout: 5000 });
+                // Wait for Chrome to fully close
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Try again
+                const persistentContext = await chromium.launchPersistentContext(chromeUserDataDir, {
+                  channel: "chrome",
+                  headless: false,
+                  args: [
+                    `--profile-directory=${profileDir}`,
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                  ],
+                });
+
+                const page = persistentContext.pages()[0] ?? await persistentContext.newPage();
+                const session: BrowserSession = {
+                  browser: persistentContext,
+                  context: persistentContext,
+                  page,
+                  service,
+                  lastUsed: new Date(),
+                  method: "cdp-chrome",
+                };
+                browserSessions.set(service, session);
+                logger.info(`[unbrowse] Launched Chrome with user profile for ${service} (after quitting)`);
+                return session;
+              } catch {
+                logger.warn(`[unbrowse] Could not quit Chrome or relaunch with profile`);
+              }
+            }
+          }
+        }
+      }
+
+      // Strategy 6: Fall back to fresh Playwright Chromium
       if (!browser) {
         browser = await chromium.launch({
           headless: true,
@@ -1034,6 +1133,23 @@ const plugin = {
                   logger.info(`[unbrowse] Loaded auth from vault for ${p.service}`);
                 }
               } catch { /* vault not available */ }
+
+              // Fallback: try loading cookies from Chrome's cookie database
+              if (Object.keys(cookies).length === 0) {
+                try {
+                  const { readChromeCookies, chromeCookiesAvailable } = require("./src/chrome-cookies.js");
+                  if (chromeCookiesAvailable()) {
+                    const domain = new URL(baseUrl).hostname.replace(/^www\./, "");
+                    const chromeCookies = readChromeCookies(domain);
+                    if (Object.keys(chromeCookies).length > 0) {
+                      cookies = chromeCookies;
+                      logger.info(`[unbrowse] Loaded ${Object.keys(chromeCookies).length} cookies from Chrome for ${domain}`);
+                    }
+                  }
+                } catch (err) {
+                  // Chrome cookies not available — continue without
+                }
+              }
             }
             loadAuth();
 
@@ -2555,6 +2671,24 @@ const plugin = {
                   logger.info(`[unbrowse] Loaded auth from vault for ${service}`);
                 }
               } catch { /* vault not available */ }
+            }
+
+            // Fallback: try loading cookies from Chrome's cookie database
+            if (Object.keys(authCookies).length === 0) {
+              try {
+                const { readChromeCookies, chromeCookiesAvailable } = require("./src/chrome-cookies.js");
+                if (chromeCookiesAvailable()) {
+                  const domain = new URL(p.url).hostname.replace(/^www\./, "");
+                  const chromeCookies = readChromeCookies(domain);
+                  if (Object.keys(chromeCookies).length > 0) {
+                    authCookies = chromeCookies;
+                    authSource = "chrome";
+                    logger.info(`[unbrowse] Loaded ${Object.keys(chromeCookies).length} cookies from Chrome for ${domain}`);
+                  }
+                }
+              } catch (err) {
+                logger.warn(`[unbrowse] Could not read Chrome cookies: ${(err as Error).message}`);
+              }
             }
 
             // Get or reuse browser session — uses CDP cascade:
