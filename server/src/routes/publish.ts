@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { getDb } from "../db.js";
 import type { PublishBody } from "../types.js";
+import { reviewSkill, staticScan } from "../skill-review.js";
 
 /** Generate a deterministic skill ID from service + baseUrl. */
 function makeSkillId(service: string, baseUrl: string): string {
@@ -76,6 +77,24 @@ export async function publishSkill(req: Request): Promise<Response> {
     );
   }
 
+  // ── Pre-screen: fast static scan ──────────────────────────────────
+  // Instant reject for known-bad patterns (shell exec, SSH key access, etc.)
+  const preScreen = staticScan(body.skillMd ?? "", body.apiTemplate ?? "");
+  if (preScreen.blocked) {
+    const reasons = preScreen.flags
+      .filter(f => f.severity === "block")
+      .map(f => f.description);
+    console.log(`[publish] BLOCKED ${body.service}: ${reasons.join(", ")}`);
+    return Response.json(
+      {
+        error: "Skill rejected by safety review",
+        reasons,
+        flags: preScreen.flags,
+      },
+      { status: 422 },
+    );
+  }
+
   const db = getDb();
   const id = makeSkillId(body.service, body.baseUrl);
   const slug = makeSlug(body.service);
@@ -125,7 +144,14 @@ export async function publishSkill(req: Request): Promise<Response> {
       id,
     ]);
 
-    return Response.json({ id, slug, version: newVersion });
+    // Kick off async LLM review — skill is pending until approved
+    reviewSkill(id).then(result => {
+      console.log(`[publish] Review ${body.service} v${newVersion}: ${result.status} (score: ${result.score}) — ${result.reason}`);
+    }).catch(err => {
+      console.error(`[publish] Review failed for ${body.service}: ${err}`);
+    });
+
+    return Response.json({ id, slug, version: newVersion, reviewStatus: "pending" });
   }
 
   // Insert new skill
@@ -145,5 +171,12 @@ export async function publishSkill(req: Request): Promise<Response> {
     searchText,
   ]);
 
-  return Response.json({ id, slug, version: 1 }, { status: 201 });
+  // Kick off async LLM review — skill is pending until approved
+  reviewSkill(id).then(result => {
+    console.log(`[publish] Review ${body.service} v1: ${result.status} (score: ${result.score}) — ${result.reason}`);
+  }).catch(err => {
+    console.error(`[publish] Review failed for ${body.service}: ${err}`);
+  });
+
+  return Response.json({ id, slug, version: 1, reviewStatus: "pending" }, { status: 201 });
 }

@@ -23,13 +23,36 @@ export function downloadSkill(
 
   const row = db.query(`
     SELECT id, service, base_url, auth_method_type,
-           endpoints_json, skill_md, api_template, creator_wallet
+           endpoints_json, skill_md, api_template, creator_wallet,
+           review_status, review_reason
     FROM skills WHERE id = ?
   `).get(id) as any;
 
   if (!row) {
     return Response.json({ error: "Skill not found" }, { status: 404 });
   }
+
+  // Only serve skills that passed safety review
+  const reviewStatus = row.review_status ?? "pending";
+  if (reviewStatus === "rejected") {
+    return Response.json(
+      { error: "Skill rejected by safety review", reason: row.review_reason },
+      { status: 403 },
+    );
+  }
+  if (reviewStatus === "pending") {
+    return Response.json(
+      { error: "Skill is pending safety review — try again shortly" },
+      { status: 202 },
+    );
+  }
+  if (reviewStatus === "flagged") {
+    return Response.json(
+      { error: "Skill is flagged for manual review", reason: row.review_reason },
+      { status: 403 },
+    );
+  }
+  // reviewStatus === "approved" — proceed with download
 
   // Increment download count
   db.run(`UPDATE skills SET download_count = download_count + 1 WHERE id = ?`, [id]);

@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS skills (
   download_count INTEGER DEFAULT 0,
   tags_json TEXT DEFAULT '[]',
   search_text TEXT NOT NULL,
+  -- Safety review
+  review_status TEXT DEFAULT 'pending',   -- pending | approved | rejected | flagged
+  review_reason TEXT,
+  review_flags TEXT DEFAULT '[]',
+  review_score INTEGER,
+  reviewed_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -64,6 +70,10 @@ CREATE TABLE IF NOT EXISTS downloads (
   creator_amount TEXT,
   treasury_amount TEXT
 );
+
+-- Migration: add review columns to existing skills tables
+-- These are safe to re-run (ALTER TABLE ADD COLUMN IF NOT EXISTS equivalent via try/ignore)
+-- SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we catch errors in code.
 
 -- Creator earnings tracking
 CREATE TABLE IF NOT EXISTS creator_earnings (

@@ -10,7 +10,8 @@ export function getSkillSummary(id: string): Response {
   const row = db.query(`
     SELECT id, service, slug, base_url, auth_method_type,
            endpoint_count, download_count, tags_json, endpoints_json,
-           creator_wallet, creator_alias, updated_at
+           creator_wallet, creator_alias, updated_at,
+           review_status, review_score
     FROM skills WHERE id = ?
   `).get(id) as any;
 
@@ -31,5 +32,7 @@ export function getSkillSummary(id: string): Response {
     creatorWallet: row.creator_wallet,
     creatorAlias: row.creator_alias ?? undefined,
     updatedAt: row.updated_at,
+    reviewStatus: row.review_status ?? "pending",
+    reviewScore: row.review_score ?? null,
   });
 }

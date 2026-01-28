@@ -28,5 +28,21 @@ export function initDb(dbPath?: string): Database {
   const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");
   db.exec(schema);
 
+  // Migrations for existing databases — add review columns if missing
+  const reviewColumns = [
+    "review_status TEXT DEFAULT 'pending'",
+    "review_reason TEXT",
+    "review_flags TEXT DEFAULT '[]'",
+    "review_score INTEGER",
+    "reviewed_at TEXT",
+  ];
+  for (const col of reviewColumns) {
+    try {
+      db.exec(`ALTER TABLE skills ADD COLUMN ${col}`);
+    } catch {
+      // Column already exists — expected on subsequent runs
+    }
+  }
+
   return db;
 }

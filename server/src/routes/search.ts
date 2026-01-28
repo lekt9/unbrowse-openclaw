@@ -17,16 +17,24 @@ export function searchSkills(req: Request): Response {
   let skills: SkillSummary[];
   let total: number;
 
+  // Only show approved skills in search results (unless ?include_unreviewed=true for admin)
+  const includeUnreviewed = url.searchParams.get("include_unreviewed") === "true";
+  const reviewFilter = includeUnreviewed
+    ? "AND (s.review_status = 'approved' OR s.review_status IS NULL OR s.review_status = 'pending')"
+    : "AND (s.review_status = 'approved' OR s.review_status IS NULL)";
+  // Note: IS NULL handles legacy rows that predate the review system
+
   if (query) {
     // Full-text search via FTS5
     const ftsQuery = query.split(/\s+/).map((w) => `"${w}"`).join(" OR ");
     const rows = db.query(`
       SELECT s.id, s.service, s.slug, s.base_url, s.auth_method_type,
              s.endpoint_count, s.download_count, s.tags_json,
-             s.creator_wallet, s.creator_alias, s.updated_at
+             s.creator_wallet, s.creator_alias, s.updated_at,
+             s.review_status, s.review_score
       FROM skills s
       JOIN skills_fts fts ON s.rowid = fts.rowid
-      WHERE skills_fts MATCH ?
+      WHERE skills_fts MATCH ? ${reviewFilter}
       ORDER BY s.download_count DESC
       LIMIT ? OFFSET ?
     `).all(ftsQuery, limit, offset) as any[];
@@ -35,7 +43,7 @@ export function searchSkills(req: Request): Response {
       SELECT COUNT(*) as cnt
       FROM skills s
       JOIN skills_fts fts ON s.rowid = fts.rowid
-      WHERE skills_fts MATCH ?
+      WHERE skills_fts MATCH ? ${reviewFilter}
     `).get(ftsQuery) as any;
 
     total = countRow?.cnt ?? 0;
@@ -43,14 +51,14 @@ export function searchSkills(req: Request): Response {
   } else if (tags) {
     // Tag-based filter
     const tagList = tags.split(",").map((t) => t.trim().toLowerCase());
-    const placeholders = tagList.map(() => "?").join(", ");
     const rows = db.query(`
-      SELECT id, service, slug, base_url, auth_method_type,
-             endpoint_count, download_count, tags_json,
-             creator_wallet, creator_alias, updated_at
-      FROM skills
-      WHERE ${tagList.map(() => "tags_json LIKE ?").join(" OR ")}
-      ORDER BY download_count DESC
+      SELECT s.id, s.service, s.slug, s.base_url, s.auth_method_type,
+             s.endpoint_count, s.download_count, s.tags_json,
+             s.creator_wallet, s.creator_alias, s.updated_at,
+             s.review_status, s.review_score
+      FROM skills s
+      WHERE (${tagList.map(() => "s.tags_json LIKE ?").join(" OR ")}) ${reviewFilter}
+      ORDER BY s.download_count DESC
       LIMIT ? OFFSET ?
     `).all(...tagList.map((t) => `%"${t}"%`), limit, offset) as any[];
 
@@ -59,15 +67,17 @@ export function searchSkills(req: Request): Response {
   } else {
     // Browse all — most popular first
     const rows = db.query(`
-      SELECT id, service, slug, base_url, auth_method_type,
-             endpoint_count, download_count, tags_json,
-             creator_wallet, creator_alias, updated_at
-      FROM skills
-      ORDER BY download_count DESC
+      SELECT s.id, s.service, s.slug, s.base_url, s.auth_method_type,
+             s.endpoint_count, s.download_count, s.tags_json,
+             s.creator_wallet, s.creator_alias, s.updated_at,
+             s.review_status, s.review_score
+      FROM skills s
+      WHERE 1=1 ${reviewFilter}
+      ORDER BY s.download_count DESC
       LIMIT ? OFFSET ?
     `).all(limit, offset) as any[];
 
-    const countRow = db.query(`SELECT COUNT(*) as cnt FROM skills`).get() as any;
+    const countRow = db.query(`SELECT COUNT(*) as cnt FROM skills s WHERE 1=1 ${reviewFilter}`).get() as any;
     total = countRow?.cnt ?? 0;
     skills = rows.map(mapRow);
   }
@@ -75,7 +85,7 @@ export function searchSkills(req: Request): Response {
   return Response.json({ skills, total });
 }
 
-function mapRow(row: any): SkillSummary {
+function mapRow(row: any): SkillSummary & { reviewStatus?: string; reviewScore?: number | null } {
   return {
     id: row.id,
     service: row.service,
@@ -88,5 +98,7 @@ function mapRow(row: any): SkillSummary {
     creatorWallet: row.creator_wallet,
     creatorAlias: row.creator_alias ?? undefined,
     updatedAt: row.updated_at,
+    reviewStatus: row.review_status ?? "approved",
+    reviewScore: row.review_score ?? null,
   };
 }
