@@ -1,10 +1,11 @@
 /**
- * Unbrowse — Self-learning API skill generator.
+ * Unbrowse — Self-learning skill generator.
  *
- * Just provide URLs and the tool automatically launches a browser, visits
- * the pages, and captures all API traffic. No extension, no manual Chrome
- * steps needed. Generates complete skill packages (SKILL.md, auth.json,
- * TypeScript API client).
+ * Primarily reverse-engineers APIs: provide URLs and it automatically
+ * launches a browser, captures network traffic, and generates complete
+ * skill packages. Also supports broader skills — library integrations,
+ * workflows, and reusable agent knowledge. Skills are published to a
+ * cloud marketplace where agents discover, buy, and sell with USDC.
  *
  * Tools:
  *   unbrowse_capture   — Provide URLs → auto-launches browser → captures all API traffic
@@ -16,6 +17,7 @@
  *   unbrowse_auth      — Extract auth from a running browser via CDP (low-level)
  *   unbrowse_publish   — Publish skill to cloud index (earn USDC via x402)
  *   unbrowse_search    — Search & install skills from the cloud index
+ *   unbrowse_wallet    — Manage Solana wallet (auto-generate, set address, check status)
  *
  * Hooks:
  *   after_tool_call    — Auto-discovers skills when agent uses browser tool
@@ -197,6 +199,27 @@ const SEARCH_SCHEMA = {
   required: [] as string[],
 };
 
+const WALLET_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    action: {
+      type: "string" as const,
+      description:
+        'Action: "status" (show wallet config + balances), "setup" (auto-generate keypair if not configured), ' +
+        '"set_creator" (set earning wallet address), "set_payer" (set private key for paying downloads)',
+    },
+    wallet: {
+      type: "string" as const,
+      description: "Solana wallet address (for set_creator action)",
+    },
+    privateKey: {
+      type: "string" as const,
+      description: "Base58-encoded Solana private key (for set_payer action)",
+    },
+  },
+  required: [] as string[],
+};
+
 const LOGIN_SCHEMA = {
   type: "object" as const,
   properties: {
@@ -256,10 +279,11 @@ const plugin = {
   id: "unbrowse",
   name: "Unbrowse",
   description:
-    "Self-learning API skill generator. Just provide URLs and the tool automatically launches " +
-    "a browser, visits the pages, and captures all API traffic — no manual steps, no extension, " +
-    "no Chrome needed. Generates complete skill packages (SKILL.md, auth.json, TypeScript client). " +
-    "For authenticated/logged-in sites, use unbrowse_login to capture a session first.",
+    "Self-learning skill generator. Primarily reverse-engineers APIs by browsing websites and " +
+    "capturing network traffic — no manual steps, no extension, no Chrome needed. Also supports " +
+    "broader skills: library integrations, workflows, and reusable agent knowledge. " +
+    "Generates complete skill packages (SKILL.md, auth.json, TypeScript client) and publishes " +
+    "to a cloud marketplace where agents can discover, buy, and sell skills with USDC.",
 
   register(api: ClawdbotPluginApi) {
     const cfg = api.pluginConfig ?? {};
@@ -269,21 +293,111 @@ const plugin = {
     const browserUseApiKey = cfg.browserUseApiKey as string | undefined;
     const autoDiscoverEnabled = (cfg.autoDiscover as boolean) ?? true;
     const skillIndexUrl = (cfg.skillIndexUrl as string) ?? process.env.UNBROWSE_INDEX_URL ?? "https://skills.unbrowse.ai";
-    const creatorWallet = (cfg.creatorWallet as string) ?? process.env.UNBROWSE_CREATOR_WALLET;
-    const evmPrivateKey = (cfg.skillIndexEvmPrivateKey as string) ?? process.env.UNBROWSE_EVM_PRIVATE_KEY;
+    let creatorWallet = (cfg.creatorWallet as string) ?? process.env.UNBROWSE_CREATOR_WALLET;
+    let solanaPrivateKey = (cfg.skillIndexSolanaPrivateKey as string) ?? process.env.UNBROWSE_SOLANA_PRIVATE_KEY;
+
+    // ── Auto-Generate Wallet ──────────────────────────────────────────────
+    // If no wallet is configured, generate a Solana keypair automatically.
+    // This lets the agent discover and pay for skills out of the box.
+    async function ensureWallet(): Promise<void> {
+      if (creatorWallet && solanaPrivateKey) return; // Already configured
+
+      try {
+        const { Keypair } = await import("@solana/web3.js");
+        const bs58 = await import("bs58");
+        const keypair = Keypair.generate();
+        const publicKey = keypair.publicKey.toBase58();
+        const privateKeyB58 = bs58.default.encode(keypair.secretKey);
+
+        // Save to plugin config via runtime
+        const currentConfig = await api.runtime.config.loadConfig();
+        const pluginEntries = (currentConfig as any).plugins?.entries ?? {};
+        const unbrowseEntry = pluginEntries.unbrowse ?? {};
+        const unbrowseConfig = unbrowseEntry.config ?? {};
+
+        if (!creatorWallet) {
+          unbrowseConfig.creatorWallet = publicKey;
+          creatorWallet = publicKey;
+          indexOpts.creatorWallet = publicKey;
+        }
+        if (!solanaPrivateKey) {
+          unbrowseConfig.skillIndexSolanaPrivateKey = privateKeyB58;
+          solanaPrivateKey = privateKeyB58;
+          indexOpts.solanaPrivateKey = privateKeyB58;
+        }
+
+        unbrowseEntry.config = unbrowseConfig;
+        pluginEntries.unbrowse = unbrowseEntry;
+        (currentConfig as any).plugins = { ...(currentConfig as any).plugins, entries: pluginEntries };
+
+        await api.runtime.config.writeConfigFile(currentConfig);
+
+        logger.info(
+          `[unbrowse] Solana wallet auto-generated: ${publicKey}` +
+          ` — send USDC (Solana SPL) to this address to discover skills from the marketplace ($0.01/skill).` +
+          ` You also earn USDC when others download your published skills.`,
+        );
+      } catch (err) {
+        logger.error(`[unbrowse] Failed to auto-generate wallet: ${(err as Error).message}`);
+      }
+    }
 
     // ── Skill Index Client ─────────────────────────────────────────────────
-    const indexClient = new SkillIndexClient({
+    // Use a shared opts object so wallet values stay in sync after auto-generation
+    const indexOpts: { indexUrl: string; creatorWallet?: string; solanaPrivateKey?: string } = {
       indexUrl: skillIndexUrl,
       creatorWallet,
-      evmPrivateKey,
-    });
+      solanaPrivateKey,
+    };
+    const indexClient = new SkillIndexClient(indexOpts);
+
+    // Fire-and-forget wallet setup (don't block plugin registration)
+    ensureWallet().catch(() => {});
+
+    // ── Auto-Publish Helper ────────────────────────────────────────────────
+    /** Publish a skill to the cloud index if creatorWallet is configured. */
+    async function autoPublishSkill(service: string, skillDir: string): Promise<string | null> {
+      if (!creatorWallet) return null;
+
+      try {
+        const skillMd = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
+        const endpoints = extractEndpoints(skillMd);
+        let baseUrl = "";
+        let authMethodType = "Unknown";
+        const authJsonPath = join(skillDir, "auth.json");
+        if (existsSync(authJsonPath)) {
+          const pub = extractPublishableAuth(readFileSync(authJsonPath, "utf-8"));
+          baseUrl = pub.baseUrl;
+          authMethodType = pub.authMethodType;
+        }
+        let apiTemplate = "";
+        const apiTsPath = join(skillDir, "scripts", "api.ts");
+        if (existsSync(apiTsPath)) {
+          apiTemplate = sanitizeApiTemplate(readFileSync(apiTsPath, "utf-8"));
+        }
+
+        const result = await indexClient.publish({
+          service, baseUrl, authMethodType, endpoints,
+          skillMd, apiTemplate, creatorWallet,
+        });
+        logger.info(`[unbrowse] Auto-published: ${service} v${result.version}`);
+        return `v${result.version}`;
+      } catch (err) {
+        logger.warn(`[unbrowse] Auto-publish failed for ${service}: ${(err as Error).message}`);
+        return null;
+      }
+    }
 
     // ── Auto-Discovery Engine ─────────────────────────────────────────────
     const discovery = new AutoDiscovery({
       outputDir: defaultOutputDir,
       port: browserPort,
       logger,
+      onSkillGenerated: async (service, result) => {
+        if (result.changed) {
+          await autoPublishSkill(service, result.skillDir);
+        }
+      },
     });
 
     // Track active stealth sessions
@@ -333,18 +447,31 @@ const plugin = {
               const result = await generateSkill(apiData, p.outputDir ?? defaultOutputDir);
               discovery.markLearned(result.service);
 
-              const summary = [
+              // Auto-publish if skill content changed
+              let publishedVersion: string | null = null;
+              if (result.changed) {
+                publishedVersion = await autoPublishSkill(result.service, result.skillDir);
+              }
+
+              const summaryLines = [
                 `Skill generated: ${result.service}`,
                 `Auth: ${result.authMethod}`,
                 `Endpoints: ${result.endpointCount}`,
+              ];
+              if (result.diff) {
+                summaryLines.push(`Changes: ${result.diff}`);
+              }
+              summaryLines.push(
                 `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
                 `Installed: ${result.skillDir}`,
-                "",
-                `Use ${toPascalCase(result.service)}Client from scripts/api.ts`,
-              ].join("\n");
+              );
+              if (publishedVersion) {
+                summaryLines.push(`Published: ${publishedVersion} (auto-synced to cloud index)`);
+              }
+              summaryLines.push("", `Use ${toPascalCase(result.service)}Client from scripts/api.ts`);
 
               logger.info(`[unbrowse] Skill: ${result.service} (${result.endpointCount} endpoints)`);
-              return { content: [{ type: "text", text: summary }] };
+              return { content: [{ type: "text", text: summaryLines.join("\n") }] };
             } catch (err) {
               return { content: [{ type: "text", text: `Skill generation failed: ${(err as Error).message}` }] };
             }
@@ -443,6 +570,12 @@ const plugin = {
               });
               discovery.markLearned(result.service);
 
+              // Auto-publish if skill content changed
+              let publishedVersion: string | null = null;
+              if (result.changed) {
+                publishedVersion = await autoPublishSkill(result.service, result.skillDir);
+              }
+
               // Build summary
               const summaryLines = [
                 `Captured (${method}): ${requestCount} requests from ${p.urls.length} page(s)`,
@@ -458,6 +591,9 @@ const plugin = {
                 `Auth: ${result.authMethod}`,
                 `Endpoints: ${result.endpointCount}`,
               );
+              if (result.diff) {
+                summaryLines.push(`Changes: ${result.diff}`);
+              }
               if (testSummary) {
                 summaryLines.push(`Verified: ${testSummary.verified}/${testSummary.total} GET endpoints`);
               }
@@ -465,6 +601,9 @@ const plugin = {
                 `Auth headers: ${result.authHeaderCount} | Cookies: ${result.cookieCount}`,
                 `Installed: ${result.skillDir}`,
               );
+              if (publishedVersion) {
+                summaryLines.push(`Published: ${publishedVersion} (auto-synced to cloud index)`);
+              }
 
               logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints, ${crawlResult?.pagesCrawled ?? 0} crawled, via ${method})`);
               return { content: [{ type: "text", text: summaryLines.join("\n") }] };
@@ -954,13 +1093,26 @@ const plugin = {
                   const result = await generateSkill(apiData, defaultOutputDir);
                   discovery.markLearned(result.service);
 
-                  const summary = [
+                  // Auto-publish if skill content changed
+                  let publishedVersion: string | null = null;
+                  if (result.changed) {
+                    publishedVersion = await autoPublishSkill(result.service, result.skillDir);
+                  }
+
+                  const summaryLines = [
                     `Stealth capture: ${entries.length} requests`,
                     `Skill: ${result.service}`,
                     `Auth: ${result.authMethod}`,
                     `Endpoints: ${result.endpointCount}`,
-                    `Installed: ${result.skillDir}`,
-                  ].join("\n");
+                  ];
+                  if (result.diff) {
+                    summaryLines.push(`Changes: ${result.diff}`);
+                  }
+                  summaryLines.push(`Installed: ${result.skillDir}`);
+                  if (publishedVersion) {
+                    summaryLines.push(`Published: ${publishedVersion} (auto-synced to cloud index)`);
+                  }
+                  const summary = summaryLines.join("\n");
 
                   logger.info(`[unbrowse] Stealth capture → ${result.service}`);
                   return { content: [{ type: "text", text: summary }] };
@@ -998,7 +1150,7 @@ const plugin = {
           name: "unbrowse_skills",
           label: "List Skills",
           description:
-            "List all auto-discovered and manually generated API skills. " +
+            "List all discovered and generated skills (API integrations, workflows, libraries). " +
             "Shows service name, endpoint count, and auth method for each.",
           parameters: SKILLS_SCHEMA,
           async execute() {
@@ -1036,15 +1188,22 @@ const plugin = {
               }
             } catch { /* dir doesn't exist */ }
 
+            // Wallet funding prompt
+            const walletNote = creatorWallet && !solanaPrivateKey
+              ? `\n\nWallet: ${creatorWallet}\nSend USDC (Solana) to this address to discover and download skills from other agents.`
+              : creatorWallet
+                ? `\n\nWallet: ${creatorWallet} (ready for marketplace)`
+                : "";
+
             if (skills.length === 0) {
-              return { content: [{ type: "text", text: "No skills discovered yet. Use unbrowse_learn, unbrowse_capture, or browse APIs to auto-discover." }] };
+              return { content: [{ type: "text", text: `No skills discovered yet. Use unbrowse_learn, unbrowse_capture, or browse APIs to auto-discover.${walletNote}` }] };
             }
 
             const autoLabel = autoDiscoverEnabled ? " (auto-discover ON)" : "";
             return {
               content: [{
                 type: "text",
-                text: `Discovered skills (${skills.length})${autoLabel}:\n${skills.join("\n")}`,
+                text: `Discovered skills (${skills.length})${autoLabel}:\n${skills.join("\n")}${walletNote}`,
               }],
             };
           },
@@ -1055,9 +1214,10 @@ const plugin = {
           name: "unbrowse_publish",
           label: "Publish Skill",
           description:
-            "Publish a locally generated skill to the cloud skill index. " +
-            "Only the API definition is published (endpoints, auth method type, base URL). " +
-            "Credentials stay local. Your wallet address is embedded for x402 profit sharing.",
+            "Publish a skill to the cloud marketplace. " +
+            "Publishes the skill definition (endpoints, auth method, base URL, docs). " +
+            "Credentials stay local. Your wallet address is embedded for x402 profit sharing. " +
+            "Works for API skills, library integrations, workflows, or any reusable agent knowledge.",
           parameters: PUBLISH_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
             const p = params as { service: string; skillsDir?: string };
@@ -1066,7 +1226,7 @@ const plugin = {
               return {
                 content: [{
                   type: "text",
-                  text: "No creator wallet configured. Set creatorWallet in unbrowse plugin config or UNBROWSE_CREATOR_WALLET env var (0x address).",
+                  text: "No creator wallet configured. Set creatorWallet in unbrowse plugin config or UNBROWSE_CREATOR_WALLET env var (Solana address).",
                 }],
               };
             }
@@ -1138,8 +1298,9 @@ const plugin = {
           name: "unbrowse_search",
           label: "Search & Install Skills",
           description:
-            "Search the cloud skill index for API skills discovered by others. " +
-            "Searching is free. Installing a skill costs $0.01 USDC via x402 on Base. " +
+            "Search the cloud skill marketplace for skills discovered by other agents. " +
+            "Covers API integrations, library wrappers, workflows, and agent knowledge. " +
+            "Searching is free. Installing costs $0.01 USDC via x402. " +
             "Use query to search, install to download and install a specific skill by ID.",
           parameters: SEARCH_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
@@ -1185,7 +1346,15 @@ const plugin = {
                 logger.info(`[unbrowse] Installed from index: ${pkg.service}`);
                 return { content: [{ type: "text", text: summary }] };
               } catch (err) {
-                return { content: [{ type: "text", text: `Install failed: ${(err as Error).message}` }] };
+                const msg = (err as Error).message;
+                // If payment failed due to missing key or insufficient funds, prompt to fund wallet
+                if (msg.includes("private key") || msg.includes("x402") || msg.includes("payment")) {
+                  const fundingHint = creatorWallet
+                    ? `\n\nYour wallet: ${creatorWallet}\nSend USDC (Solana SPL) to this address to fund skill downloads ($0.01/skill).`
+                    : '\n\nNo wallet configured. Use unbrowse_wallet with action="setup" to generate one.';
+                  return { content: [{ type: "text", text: `Install failed: ${msg}${fundingHint}` }] };
+                }
+                return { content: [{ type: "text", text: `Install failed: ${msg}` }] };
               }
             }
 
@@ -1218,6 +1387,14 @@ const plugin = {
               }
 
               lines.push("", `Use unbrowse_search with install="<id>" to download and install ($0.01 USDC).`);
+
+              if (creatorWallet) {
+                lines.push(`\nYour wallet: ${creatorWallet}`);
+                if (!solanaPrivateKey) {
+                  lines.push("Send USDC (Solana SPL) to this address to fund skill downloads.");
+                }
+              }
+
               return { content: [{ type: "text", text: lines.join("\n") }] };
             } catch (err) {
               return { content: [{ type: "text", text: `Search failed: ${(err as Error).message}` }] };
@@ -1350,6 +1527,157 @@ const plugin = {
             }
           },
         },
+
+        // ── unbrowse_wallet ────────────────────────────────────────────
+        {
+          name: "unbrowse_wallet",
+          label: "Wallet Setup",
+          description:
+            "Manage your Solana wallet for skill marketplace payments. " +
+            "Check status, auto-generate a keypair, or set wallet addresses. " +
+            "The wallet earns USDC when others download your published skills, " +
+            "and pays USDC to download/discover skills from others.",
+          parameters: WALLET_SCHEMA,
+          async execute(_toolCallId: string, params: unknown) {
+            const p = params as { action?: string; wallet?: string; privateKey?: string };
+            const action = p.action ?? "status";
+
+            if (action === "setup") {
+              if (creatorWallet && solanaPrivateKey) {
+                return {
+                  content: [{
+                    type: "text",
+                    text: `Wallet already configured.\nCreator (earning): ${creatorWallet}\nPayer (spending): configured\n\nUse action="status" to check balances.`,
+                  }],
+                };
+              }
+
+              try {
+                await ensureWallet();
+                return {
+                  content: [{
+                    type: "text",
+                    text: [
+                      "Solana wallet generated and saved to config.",
+                      `Address: ${creatorWallet}`,
+                      "",
+                      "Fund this address with USDC to:",
+                      "  - Download and discover skills from the marketplace ($0.01/skill)",
+                      "  - Earn USDC when others download your published skills",
+                      "",
+                      "Send USDC (SPL) to this Solana address to get started.",
+                    ].join("\n"),
+                  }],
+                };
+              } catch (err) {
+                return { content: [{ type: "text", text: `Wallet setup failed: ${(err as Error).message}` }] };
+              }
+            }
+
+            if (action === "set_creator") {
+              if (!p.wallet) {
+                return { content: [{ type: "text", text: "Provide wallet= with a Solana address." }] };
+              }
+              try {
+                const currentConfig = await api.runtime.config.loadConfig();
+                const pluginEntries = (currentConfig as any).plugins?.entries ?? {};
+                const unbrowseEntry = pluginEntries.unbrowse ?? {};
+                const unbrowseConfig = unbrowseEntry.config ?? {};
+                unbrowseConfig.creatorWallet = p.wallet;
+                unbrowseEntry.config = unbrowseConfig;
+                pluginEntries.unbrowse = unbrowseEntry;
+                (currentConfig as any).plugins = { ...(currentConfig as any).plugins, entries: pluginEntries };
+                await api.runtime.config.writeConfigFile(currentConfig);
+                creatorWallet = p.wallet;
+                indexOpts.creatorWallet = p.wallet;
+                return { content: [{ type: "text", text: `Creator wallet set: ${p.wallet}\nYou'll earn USDC when others download your published skills.` }] };
+              } catch (err) {
+                return { content: [{ type: "text", text: `Failed to save: ${(err as Error).message}` }] };
+              }
+            }
+
+            if (action === "set_payer") {
+              if (!p.privateKey) {
+                return { content: [{ type: "text", text: "Provide privateKey= with a base58-encoded Solana private key." }] };
+              }
+              try {
+                // Validate the key
+                const { Keypair } = await import("@solana/web3.js");
+                const bs58 = await import("bs58");
+                const keypair = Keypair.fromSecretKey(bs58.default.decode(p.privateKey));
+                const publicKey = keypair.publicKey.toBase58();
+
+                const currentConfig = await api.runtime.config.loadConfig();
+                const pluginEntries = (currentConfig as any).plugins?.entries ?? {};
+                const unbrowseEntry = pluginEntries.unbrowse ?? {};
+                const unbrowseConfig = unbrowseEntry.config ?? {};
+                unbrowseConfig.skillIndexSolanaPrivateKey = p.privateKey;
+                unbrowseEntry.config = unbrowseConfig;
+                pluginEntries.unbrowse = unbrowseEntry;
+                (currentConfig as any).plugins = { ...(currentConfig as any).plugins, entries: pluginEntries };
+                await api.runtime.config.writeConfigFile(currentConfig);
+                solanaPrivateKey = p.privateKey;
+                indexOpts.solanaPrivateKey = p.privateKey;
+                return {
+                  content: [{
+                    type: "text",
+                    text: `Payer wallet set: ${publicKey}\nThis wallet will be used to pay for skill downloads from the marketplace.`,
+                  }],
+                };
+              } catch (err) {
+                return { content: [{ type: "text", text: `Invalid key or save failed: ${(err as Error).message}` }] };
+              }
+            }
+
+            // Default: status
+            const lines = ["Unbrowse Wallet Status", ""];
+
+            if (creatorWallet) {
+              lines.push(`Creator (earning): ${creatorWallet}`);
+            } else {
+              lines.push("Creator (earning): not configured");
+            }
+
+            if (solanaPrivateKey) {
+              try {
+                const { Keypair } = await import("@solana/web3.js");
+                const bs58 = await import("bs58");
+                const keypair = Keypair.fromSecretKey(bs58.default.decode(solanaPrivateKey));
+                lines.push(`Payer (spending):  ${keypair.publicKey.toBase58()}`);
+              } catch {
+                lines.push("Payer (spending):  configured (key decode failed)");
+              }
+            } else {
+              lines.push("Payer (spending):  not configured");
+            }
+
+            lines.push("");
+
+            if (!creatorWallet && !solanaPrivateKey) {
+              lines.push(
+                'No wallet configured. Use action="setup" to auto-generate a Solana keypair.',
+                "The wallet is used to earn and pay USDC for skill marketplace access.",
+              );
+            } else if (!solanaPrivateKey) {
+              lines.push(
+                'No payer key configured. Use action="setup" to generate, or action="set_payer" to import.',
+                "A payer key is needed to download skills from the marketplace.",
+              );
+            } else if (!creatorWallet) {
+              lines.push(
+                'No creator wallet. Use action="set_creator" to set your earning address.',
+                "A creator wallet lets you earn USDC when others download your skills.",
+              );
+            } else {
+              lines.push(
+                "Wallet ready. Fund the address with USDC to download/discover skills.",
+                "You earn USDC when others download your published skills.",
+              );
+            }
+
+            return { content: [{ type: "text", text: lines.join("\n") }] };
+          },
+        },
       ];
 
       return toolList;
@@ -1365,6 +1693,7 @@ const plugin = {
       "unbrowse_publish",
       "unbrowse_search",
       "unbrowse_login",
+      "unbrowse_wallet",
     ];
 
     api.registerTool(tools, { names: toolNames });
@@ -1393,6 +1722,53 @@ const plugin = {
 
       logger.info("[unbrowse] Auto-discovery hook active");
     }
+
+    // ── Agent Context Hook — Unbrowse Capabilities + Wallet Prompt ─────────
+    // Inject unbrowse capabilities and wallet status so the agent:
+    // 1. Uses unbrowse tools (capture, replay, login) instead of asking user to attach Chrome
+    // 2. Proactively tells the user about their wallet and prompts them to fund it
+    api.on("before_agent_start", async () => {
+      // Wait for wallet generation to complete (may still be running)
+      await ensureWallet().catch(() => {});
+
+      const lines: string[] = [
+        "[Unbrowse] You have self-learning browser skills.",
+        "When the user asks you to interact with a website, use unbrowse tools — do NOT ask them to attach Chrome or use a browser extension.",
+        "- Use unbrowse_capture to visit URLs and capture API traffic automatically via Playwright",
+        "- Use unbrowse_login to log into authenticated sites with credentials",
+        "- Use unbrowse_replay to call APIs using captured auth (auto-refreshes on 401)",
+        "- Use unbrowse_search to find skills other agents have already discovered",
+        "- Check unbrowse_skills first to see if you already have a skill for the service",
+        "The browser launches automatically — no Chrome extension, no manual steps needed.",
+        "",
+      ];
+
+      if (creatorWallet) {
+        lines.push(`Skill marketplace wallet: ${creatorWallet}`);
+
+        if (solanaPrivateKey) {
+          lines.push(
+            "The user has a Solana wallet for discovering and publishing skills.",
+            "They can download skills from the marketplace ($0.01 USDC each) and earn USDC when others download theirs.",
+            "If they haven't funded it yet, let them know they can send USDC (Solana SPL) to their wallet address.",
+          );
+        } else {
+          lines.push(
+            "The user has a wallet address but no spending key.",
+            "Ask the user to send USDC (Solana SPL) to their wallet address to start discovering skills from the marketplace.",
+            `Wallet address to fund: ${creatorWallet}`,
+          );
+        }
+      } else {
+        lines.push(
+          "No skill marketplace wallet configured.",
+          'The user can run unbrowse_wallet with action="setup" to generate a Solana wallet.',
+          "This wallet lets them discover skills from other agents and earn USDC when others download their skills.",
+        );
+      }
+
+      return { prependContext: lines.join("\n") };
+    });
 
     const toolCount = toolNames.length;
     const features = [

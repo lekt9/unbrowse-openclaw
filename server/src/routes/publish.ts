@@ -68,9 +68,10 @@ export async function publishSkill(req: Request): Promise<Response> {
     );
   }
 
-  if (!body.creatorWallet.match(/^0x[a-fA-F0-9]{40}$/)) {
+  // Validate Solana wallet address (base58, 32-44 chars)
+  if (!body.creatorWallet.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
     return Response.json(
-      { error: "Invalid EVM wallet address. Must be 0x followed by 40 hex characters." },
+      { error: "Invalid Solana wallet address." },
       { status: 400 },
     );
   }

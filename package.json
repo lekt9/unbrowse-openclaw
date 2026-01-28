@@ -4,12 +4,16 @@
   "type": "module",
   "description": "Unbrowse — learn APIs from HAR files or live browser sessions, generate skills automatically",
   "clawdbot": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "dependencies": {
-    "playwright": "^1.58.0",
-    "viem": "^2.0.0",
-    "x402": "^0.1.0"
+    "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "^1.95.0",
+    "browser-use-sdk": "^2.0.13",
+    "bs58": "^5.0.0",
+    "playwright": "^1.58.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

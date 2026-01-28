@@ -26,15 +26,15 @@
       "placeholder": "https://skills.unbrowse.ai"
     },
     "creatorWallet": {
-      "label": "Creator Wallet (EVM)",
-      "help": "Your 0x wallet address for receiving USDC when others download your skills",
-      "placeholder": "0x..."
+      "label": "Creator Wallet (Solana)",
+      "help": "Your Solana wallet address for receiving USDC when others download your skills",
+      "placeholder": "ABC123..."
     },
-    "skillIndexEvmPrivateKey": {
-      "label": "Payment Private Key",
-      "help": "EVM private key for paying x402 USDC when downloading skills from the index",
+    "skillIndexSolanaPrivateKey": {
+      "label": "Payment Private Key (Solana)",
+      "help": "Base58-encoded Solana private key for paying x402 USDC when downloading skills from the index",
       "sensitive": true,
-      "placeholder": "0x..."
+      "placeholder": "base58..."
     }
   },
   "configSchema": {
@@ -47,7 +47,7 @@
       "autoDiscover": { "type": "boolean", "default": true },
       "skillIndexUrl": { "type": "string", "default": "https://skills.unbrowse.ai" },
       "creatorWallet": { "type": "string" },
-      "skillIndexEvmPrivateKey": { "type": "string" }
+      "skillIndexSolanaPrivateKey": { "type": "string" }
     }
   }
 }

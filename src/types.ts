@@ -71,6 +71,10 @@ export interface SkillResult {
   unverifiedEndpoints?: number;
   openApiSource?: string | null;
   pagesCrawled?: number;
+  /** Whether the skill content changed from the previous version. */
+  changed: boolean;
+  /** Human-readable diff summary (e.g. "+3 new endpoint(s)"). */
+  diff?: string | null;
 }
 
 /** CDP network request from browser control API. */

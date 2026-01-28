@@ -4,4 +4,5 @@ dist/
 *.js.map
 *.d.ts
 !clawdbot.plugin.json
+!clawdbot.d.ts
 .DS_Store

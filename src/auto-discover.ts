@@ -17,10 +17,13 @@ import { homedir } from "node:os";
 import { parseHar } from "./har-parser.js";
 import { generateSkill } from "./skill-generator.js";
 import { captureFromBrowser } from "./cdp-capture.js";
-import type { ParsedRequest } from "./types.js";
+import type { ParsedRequest, SkillResult } from "./types.js";
 
 /** Minimum API calls to a domain before auto-generating a skill. */
 const MIN_REQUESTS_FOR_SKILL = 5;
+
+/** Higher threshold for re-generating already-learned domains (new unique URLs needed). */
+const RELEARN_THRESHOLD = 10;
 
 /** Cooldown between discovery attempts (ms) — don't spam on every browser call. */
 const DISCOVERY_COOLDOWN_MS = 30_000;
@@ -50,14 +53,19 @@ export class AutoDiscovery {
   /** Logger from plugin API. */
   private logger: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
 
+  /** Callback when a skill is generated or updated. */
+  private onSkillGenerated?: (service: string, result: SkillResult) => Promise<void>;
+
   constructor(opts: {
     outputDir?: string;
     port?: number;
     logger: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+    onSkillGenerated?: (service: string, result: SkillResult) => Promise<void>;
   }) {
     this.outputDir = opts.outputDir ?? join(homedir(), ".clawdbot", "skills");
     this.port = opts.port ?? 18791;
     this.logger = opts.logger;
+    this.onSkillGenerated = opts.onSkillGenerated;
 
     // Pre-populate learned domains from existing skills
     this.loadExistingSkills();
@@ -107,30 +115,38 @@ export class AutoDiscovery {
         this.seenUrls.add(req.url);
 
         const serviceName = this.domainToService(req.domain);
-        if (this.learnedDomains.has(serviceName)) continue;
-
         if (!domainCounts[serviceName]) domainCounts[serviceName] = [];
         domainCounts[serviceName].push(req);
       }
 
       // Check which domains crossed the threshold
+      // New domains: 5 requests. Known domains: 10 new unique URLs to re-learn.
       const generated: string[] = [];
 
       for (const [serviceName, requests] of Object.entries(domainCounts)) {
-        if (requests.length >= MIN_REQUESTS_FOR_SKILL) {
+        const isKnown = this.learnedDomains.has(serviceName);
+        const threshold = isKnown ? RELEARN_THRESHOLD : MIN_REQUESTS_FOR_SKILL;
+
+        if (requests.length >= threshold) {
           this.logger.info(
-            `[unbrowse] Auto-discover: ${serviceName} has ${requests.length} API calls — generating skill`,
+            `[unbrowse] Auto-discover: ${serviceName} has ${requests.length} new API calls${isKnown ? " (re-learning)" : ""} — generating skill`,
           );
 
           try {
-            // Re-parse with full data for this domain
             const result = await generateSkill(apiData, this.outputDir);
             this.learnedDomains.add(result.service);
             generated.push(result.service);
 
             this.logger.info(
-              `[unbrowse] Auto-discover: skill "${result.service}" generated (${result.endpointCount} endpoints)`,
+              `[unbrowse] Auto-discover: skill "${result.service}" ${result.changed ? "updated" : "unchanged"} (${result.endpointCount} endpoints${result.diff ? `, ${result.diff}` : ""})`,
             );
+
+            // Fire callback for auto-publish if skill changed
+            if (result.changed && this.onSkillGenerated) {
+              await this.onSkillGenerated(result.service, result).catch(err =>
+                this.logger.error(`[unbrowse] Auto-publish callback failed for ${result.service}:`, err),
+              );
+            }
           } catch (err) {
             this.logger.error(`[unbrowse] Auto-discover failed for ${serviceName}:`, err);
           }

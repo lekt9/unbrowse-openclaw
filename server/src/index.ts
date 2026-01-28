@@ -2,7 +2,7 @@
  * Unbrowse Skill Index Server
  *
  * Cloud marketplace for API skills discovered by unbrowse agents.
- * Skills are published for free, downloaded via x402 USDC payments on Base.
+ * Skills are published for free, downloaded via x402 Solana USDC payments.
  * Creators earn per download — wallet address embedded in each skill.
  *
  * Routes:
@@ -13,51 +13,32 @@
  *   GET  /health                  — Health check
  */
 
-import { initDb } from "./db.js";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { initDb, getDb } from "./db.js";
 import { searchSkills } from "./routes/search.js";
 import { getSkillSummary } from "./routes/summary.js";
 import { downloadSkill } from "./routes/download.js";
 import { publishSkill } from "./routes/publish.js";
+import { handleDownloadPaymentGate, isX402Enabled, getDownloadPriceUsd } from "./x402.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? "4402");
-const OPERATOR_WALLET = process.env.OPERATOR_WALLET ?? "";
-const DOWNLOAD_PRICE_USD = parseFloat(process.env.DOWNLOAD_PRICE ?? "0.01");
 
 // Initialize database
 initDb();
 console.log(`[unbrowse-index] Database initialized`);
 
-// ── x402 setup ──────────────────────────────────────────────────────────────
-
-let paymentMiddleware: ((req: Request) => Promise<Response | null>) | null = null;
-
-async function setupX402() {
-  if (!OPERATOR_WALLET) {
-    console.log("[unbrowse-index] No OPERATOR_WALLET set — downloads are free (dev mode)");
-    return;
-  }
-
-  try {
-    const { createPaymentMiddleware } = await import("x402/server");
-    const facilitatorUrl = process.env.FACILITATOR_URL ?? "https://x402.org/facilitator";
-    const network = process.env.NETWORK ?? "base-sepolia";
-
-    paymentMiddleware = createPaymentMiddleware({
-      payTo: OPERATOR_WALLET as `0x${string}`,
-      network,
-      facilitatorUrl,
-      priceUsd: DOWNLOAD_PRICE_USD,
-    });
-
-    console.log(`[unbrowse-index] x402 enabled — $${DOWNLOAD_PRICE_USD} USDC per download → ${OPERATOR_WALLET}`);
-  } catch (err) {
-    console.warn(`[unbrowse-index] x402 setup failed (downloads will be free): ${err}`);
-  }
+// Log x402 status
+if (isX402Enabled()) {
+  console.log(`[unbrowse-index] x402 enabled — $${getDownloadPriceUsd()} USDC per download (Solana)`);
+} else {
+  console.log("[unbrowse-index] No FDRY_TREASURY_WALLET set — downloads are free (dev mode)");
 }
 
-await setupX402();
-
 // ── Router ──────────────────────────────────────────────────────────────────
+
+const WEB_DIST = join(__dirname, "..", "web", "dist");
 
 const server = Bun.serve({
   port: PORT,
@@ -70,8 +51,8 @@ const server = Bun.serve({
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, Payment-Signature",
-      "Access-Control-Expose-Headers": "Payment-Required, Payment-Response",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Payment",
+      "Access-Control-Expose-Headers": "X-Payment-Response",
     };
 
     if (method === "OPTIONS") {
@@ -83,7 +64,11 @@ const server = Bun.serve({
 
       // Health check
       if (path === "/health" && method === "GET") {
-        response = Response.json({ ok: true, service: "unbrowse-skill-index" });
+        response = Response.json({
+          ok: true,
+          service: "unbrowse-skill-index",
+          x402: isX402Enabled(),
+        });
       }
       // Search
       else if (path === "/skills/search" && method === "GET") {
@@ -96,25 +81,42 @@ const server = Bun.serve({
       }
       // Download (x402 paywalled)
       else if (path.match(/^\/skills\/([^/]+)\/download$/) && method === "GET") {
-        // Apply x402 payment gate
-        if (paymentMiddleware) {
-          const paymentResult = await paymentMiddleware(req);
-          if (paymentResult) {
-            // Payment required or failed — return the 402 response
-            return addCors(paymentResult, corsHeaders);
-          }
-          // Payment verified — proceed with download
+        const id = path.match(/^\/skills\/([^/]+)\/download$/)![1];
+
+        // Look up creator wallet for payment split
+        const db = getDb();
+        const row = db.query("SELECT creator_wallet FROM skills WHERE id = ?").get(id) as any;
+        const creatorWallet: string | null = row?.creator_wallet ?? null;
+
+        // x402 payment gate
+        const gateResult = await handleDownloadPaymentGate(req, id, creatorWallet);
+        if (gateResult.response) {
+          return addCors(gateResult.response, corsHeaders);
         }
 
-        const id = path.match(/^\/skills\/([^/]+)\/download$/)![1];
-        response = downloadSkill(id);
+        // Payment verified — proceed with download
+        response = downloadSkill(id, {
+          signature: gateResult.signature,
+          amount: gateResult.amount,
+          splits: gateResult.splits,
+        });
       }
       // Publish
       else if (path === "/skills/publish" && method === "POST") {
         response = await publishSkill(req);
       }
-      // 404
+      // Serve web frontend static files
       else {
+        const filePath = path === "/" ? "/index.html" : path;
+        const file = Bun.file(join(WEB_DIST, filePath));
+        if (await file.exists()) {
+          return new Response(file);
+        }
+        // SPA fallback — serve index.html for client-side routing
+        const indexFile = Bun.file(join(WEB_DIST, "index.html"));
+        if (await indexFile.exists()) {
+          return new Response(indexFile);
+        }
         response = Response.json({ error: "Not found" }, { status: 404 });
       }
 

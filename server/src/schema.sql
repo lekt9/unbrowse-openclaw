@@ -48,13 +48,21 @@ CREATE TRIGGER IF NOT EXISTS skills_au AFTER UPDATE ON skills BEGIN
   VALUES (new.rowid, new.service, new.base_url, new.search_text, new.tags_json);
 END;
 
--- Track individual downloads for analytics
+-- Track individual downloads with Solana payment details
 CREATE TABLE IF NOT EXISTS downloads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   skill_id TEXT NOT NULL REFERENCES skills(id),
   downloaded_at TEXT DEFAULT (datetime('now')),
-  payment_tx TEXT,
-  amount_usd REAL
+  -- Solana payment tracking
+  payment_signature TEXT,
+  payment_chain TEXT DEFAULT 'devnet',
+  payment_mint TEXT,
+  payer_wallet TEXT,
+  amount_usd REAL,
+  -- 4-party split amounts (USDC lamports)
+  fee_payer_amount TEXT,
+  creator_amount TEXT,
+  treasury_amount TEXT
 );
 
 -- Creator earnings tracking

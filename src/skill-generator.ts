@@ -5,7 +5,7 @@
  * generate_test_py(), generate_skill(). Outputs TypeScript instead of Python.
  */
 
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ApiData, AuthInfo, SkillResult } from "./types.js";
@@ -323,21 +323,39 @@ export async function generateSkill(
 
   mkdirSync(scriptsDir, { recursive: true });
 
-  // auth.json
+  // Generate new content
   const authJson = generateAuthJson(service, data);
-  writeFileSync(join(skillDir, "auth.json"), authJson, "utf-8");
-
-  // SKILL.md
   const skillMd = generateSkillMd(service, data);
-  writeFileSync(join(skillDir, "SKILL.md"), skillMd, "utf-8");
-
-  // scripts/api.ts
   const apiTs = generateApiTs(service, data);
-  writeFileSync(join(scriptsDir, "api.ts"), apiTs, "utf-8");
-
-  // test.ts
   const testTs = generateTestTs(service, data);
-  writeFileSync(join(skillDir, "test.ts"), testTs, "utf-8");
+
+  // Diff: compare new SKILL.md against existing to detect changes
+  const skillMdPath = join(skillDir, "SKILL.md");
+  let changed = true;
+  let diff: string | null = null;
+
+  if (existsSync(skillMdPath)) {
+    const oldSkillMd = readFileSync(skillMdPath, "utf-8");
+    if (oldSkillMd === skillMd) {
+      changed = false;
+    } else {
+      const oldEndpoints = (oldSkillMd.match(/^### /gm) || []).length;
+      const newEndpoints = (skillMd.match(/^### /gm) || []).length;
+      const added = newEndpoints - oldEndpoints;
+      diff = added > 0
+        ? `+${added} new endpoint(s) (${oldEndpoints} → ${newEndpoints})`
+        : `Updated (${oldEndpoints} → ${newEndpoints} endpoints)`;
+    }
+  }
+
+  // Write files — only overwrite SKILL.md + api.ts + test.ts if content changed
+  if (changed) {
+    writeFileSync(skillMdPath, skillMd, "utf-8");
+    writeFileSync(join(scriptsDir, "api.ts"), apiTs, "utf-8");
+    writeFileSync(join(skillDir, "test.ts"), testTs, "utf-8");
+  }
+  // auth.json always overwritten — may contain fresh tokens
+  writeFileSync(join(skillDir, "auth.json"), authJson, "utf-8");
 
   // Store credentials in encrypted vault (best-effort — vault may not be set up)
   try {
@@ -369,5 +387,7 @@ export async function generateSkill(
     unverifiedEndpoints: meta?.unverifiedEndpoints,
     openApiSource: meta?.openApiSource,
     pagesCrawled: meta?.pagesCrawled,
+    changed,
+    diff,
   };
 }

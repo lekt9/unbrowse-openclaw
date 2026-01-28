@@ -2,8 +2,8 @@
  * Skill Index Client — Publish and search the cloud skill marketplace.
  *
  * Handles communication with the skill index API, including x402 payments
- * for downloading skills. Publishing and searching are free; downloading
- * a skill package costs $0.01 USDC via x402 on Base.
+ * for downloading skills on Solana. Publishing and searching are free;
+ * downloading a skill package requires USDC via x402.
  */
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -57,41 +57,22 @@ export interface SearchResult {
 
 export class SkillIndexClient {
   private indexUrl: string;
-  private creatorWallet?: string;
-  private evmPrivateKey?: string;
-  private paymentFetch?: typeof fetch;
+  private opts: {
+    indexUrl: string;
+    creatorWallet?: string;
+    solanaPrivateKey?: string;
+  };
+
+  get creatorWallet(): string | undefined { return this.opts.creatorWallet; }
+  get solanaPrivateKey(): string | undefined { return this.opts.solanaPrivateKey; }
 
   constructor(opts: {
     indexUrl: string;
     creatorWallet?: string;
-    evmPrivateKey?: string;
+    solanaPrivateKey?: string;
   }) {
     this.indexUrl = opts.indexUrl.replace(/\/$/, "");
-    this.creatorWallet = opts.creatorWallet;
-    this.evmPrivateKey = opts.evmPrivateKey;
-  }
-
-  /**
-   * Initialize x402 payment-enabled fetch.
-   * Lazily loads @x402/fetch and viem — only needed for downloads.
-   */
-  private async initPaymentFetch(): Promise<void> {
-    if (this.paymentFetch) return;
-    if (!this.evmPrivateKey) return;
-
-    try {
-      const { wrapFetchWithPayment } = await import("x402/client") as any;
-      const { privateKeyToAccount } = await import("viem/accounts");
-
-      const account = privateKeyToAccount(this.evmPrivateKey as `0x${string}`);
-
-      this.paymentFetch = wrapFetchWithPayment(fetch, account);
-    } catch (err) {
-      throw new Error(
-        `Failed to initialize x402 payment client: ${String(err)}. ` +
-        `Ensure x402 and viem are installed.`,
-      );
-    }
+    this.opts = opts;
   }
 
   /** Search the skill index (free). */
@@ -134,30 +115,157 @@ export class SkillIndexClient {
   /**
    * Download a skill package (x402 payment required).
    *
-   * Uses @x402/fetch to automatically handle the 402 -> sign -> retry flow.
-   * Requires evmPrivateKey to be configured.
+   * Handles the 402 → sign → retry flow using a Solana keypair.
+   * Falls back to free download if the server has no x402 gate (dev mode).
    */
   async download(id: string): Promise<SkillPackage> {
-    await this.initPaymentFetch();
-
-    const fetchFn = this.paymentFetch;
-    if (!fetchFn) {
-      throw new Error(
-        "No EVM private key configured for x402 payments. " +
-        "Set skillIndexEvmPrivateKey in unbrowse config or UNBROWSE_EVM_PRIVATE_KEY env var.",
-      );
-    }
-
-    const resp = await fetchFn(`${this.indexUrl}/skills/${encodeURIComponent(id)}/download`, {
-      signal: AbortSignal.timeout(30_000),
+    // Step 1: Initial request — may return 200 (free) or 402
+    const resp = await fetch(`${this.indexUrl}/skills/${encodeURIComponent(id)}/download`, {
+      signal: AbortSignal.timeout(15_000),
     });
 
-    if (!resp.ok) {
+    if (resp.ok) {
+      // Free mode — no payment required
+      return resp.json() as Promise<SkillPackage>;
+    }
+
+    if (resp.status !== 402) {
       const text = await resp.text().catch(() => "");
       throw new Error(`Download failed (${resp.status}): ${text}`);
     }
 
-    return resp.json() as Promise<SkillPackage>;
+    // Step 2: We got a 402 — need to pay
+    if (!this.solanaPrivateKey) {
+      throw new Error(
+        "No Solana private key configured for x402 payments. " +
+        "Set skillIndexSolanaPrivateKey in unbrowse config or UNBROWSE_SOLANA_PRIVATE_KEY env var.",
+      );
+    }
+
+    const paymentReq = await resp.json();
+    const accepts = paymentReq?.accepts?.[0];
+    if (!accepts) {
+      throw new Error("Invalid 402 response: no payment requirements");
+    }
+
+    // Step 3: Build and sign the Solana x402 transaction
+    const paymentData = await this.buildAndSignPayment(accepts);
+
+    // Step 4: Retry with X-Payment header
+    const retryResp = await fetch(`${this.indexUrl}/skills/${encodeURIComponent(id)}/download`, {
+      headers: { "X-Payment": paymentData },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!retryResp.ok) {
+      const text = await retryResp.text().catch(() => "");
+      throw new Error(`Download failed after payment (${retryResp.status}): ${text}`);
+    }
+
+    return retryResp.json() as Promise<SkillPackage>;
+  }
+
+  /**
+   * Build and sign a Solana x402 payment transaction.
+   * Returns base64-encoded X-Payment header value.
+   */
+  private async buildAndSignPayment(accepts: {
+    maxAmountRequired: string;
+    payTo: string;
+    asset: string;
+    network: string;
+    extra?: { feePayer?: string; programId?: string };
+  }): Promise<string> {
+    const {
+      Connection,
+      PublicKey,
+      Transaction,
+      TransactionInstruction,
+      Keypair,
+      SystemProgram,
+    } = await import("@solana/web3.js");
+    const { getAssociatedTokenAddress, createTransferInstruction } =
+      await import("@solana/spl-token");
+
+    // Decode private key
+    let keypair: InstanceType<typeof Keypair>;
+    try {
+      const bs58 = await import("bs58");
+      keypair = Keypair.fromSecretKey(bs58.default.decode(this.solanaPrivateKey!));
+    } catch {
+      throw new Error("Invalid Solana private key. Must be base58-encoded.");
+    }
+
+    const isDevnet = accepts.network?.includes("devnet");
+    const rpcUrl = isDevnet ? "https://api.devnet.solana.com" : "https://api.mainnet-beta.solana.com";
+    const connection = new Connection(rpcUrl, "confirmed");
+
+    const amount = BigInt(accepts.maxAmountRequired);
+    const usdcMint = new PublicKey(accepts.asset);
+    const recipient = new PublicKey(accepts.payTo);
+    const programId = new PublicKey(
+      accepts.extra?.programId ?? "5g8XvMcpWEgHitW7abiYTr1u8sDasePLQnrebQyCLPvY",
+    );
+
+    // Get token accounts
+    const payerTokenAccount = await getAssociatedTokenAddress(usdcMint, keypair.publicKey);
+    const recipientTokenAccount = await getAssociatedTokenAddress(usdcMint, recipient);
+
+    // Build nonce
+    const nonce = BigInt(Date.now());
+
+    // Build verify_payment instruction: [0x00, amount(u64 LE), nonce(u64 LE)]
+    const verifyData = Buffer.alloc(17);
+    verifyData[0] = 0;
+    verifyData.writeBigUInt64LE(amount, 1);
+    verifyData.writeBigUInt64LE(nonce, 9);
+
+    const verifyInstruction = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: keypair.publicKey, isSigner: true, isWritable: false },
+      ],
+      data: verifyData,
+    });
+
+    // SPL token transfer
+    const transferInstruction = createTransferInstruction(
+      payerTokenAccount,
+      recipientTokenAccount,
+      keypair.publicKey,
+      Number(amount),
+    );
+
+    // Build settle_payment instruction: [0x01, nonce(u64 LE)]
+    const settleData = Buffer.alloc(9);
+    settleData[0] = 1;
+    settleData.writeBigUInt64LE(nonce, 1);
+
+    const settleInstruction = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: keypair.publicKey, isSigner: true, isWritable: false },
+      ],
+      data: settleData,
+    });
+
+    // Build transaction
+    const tx = new Transaction();
+    tx.add(verifyInstruction);
+    tx.add(transferInstruction);
+    tx.add(settleInstruction);
+
+    const latestBlockhash = await connection.getLatestBlockhash();
+    tx.recentBlockhash = latestBlockhash.blockhash;
+    tx.feePayer = keypair.publicKey;
+    tx.sign(keypair);
+
+    // Encode as X-Payment header
+    const paymentPayload = {
+      transaction: Buffer.from(tx.serialize()).toString("base64"),
+    };
+
+    return Buffer.from(JSON.stringify(paymentPayload)).toString("base64");
   }
 
   /** Publish a skill to the index (free). */

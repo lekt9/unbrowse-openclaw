@@ -1,23 +1,18 @@
 /**
- * Stealth Browser — Cloud browser sessions via Browser Use API.
+ * Stealth Browser — Cloud browser sessions via Browser Use SDK.
  *
  * Creates remote browser sessions with anti-detection, proxy support,
  * and full CDP access. Bypasses restrictions that block local browsers.
  *
- * Browser Use API:
- *   POST   /browsers          — create session ($0.06/hr)
- *   GET    /browsers           — list sessions
- *   GET    /browsers/{id}     — get session
- *   PATCH  /browsers/{id}     — stop session
+ * Uses the official browser-use-sdk (BrowserUseClient) for all API calls.
  *
  * Each session returns:
  *   - cdpUrl:  Chrome DevTools Protocol URL for Playwright/Puppeteer
  *   - liveUrl: Real-time viewing URL (shareable)
  */
 
+import { BrowserUseClient } from "browser-use-sdk";
 import type { CdpNetworkEntry, HarEntry } from "./types.js";
-
-const BROWSER_USE_API = "https://api.browser-use.com/api/v1";
 
 /** Browser Use session data. */
 export interface StealthSession {
@@ -30,7 +25,7 @@ export interface StealthSession {
 
 /** Options for creating a stealth browser session. */
 export interface StealthSessionOptions {
-  /** Session timeout in minutes (default: 15, max: 240 for paid). */
+  /** Session timeout in minutes (default: 15, max: 240). */
   timeout?: number;
   /** Profile ID to inherit login state. */
   profileId?: string;
@@ -39,35 +34,27 @@ export interface StealthSessionOptions {
 }
 
 /**
- * Create a stealth cloud browser session via Browser Use API.
+ * Create a stealth cloud browser session via Browser Use SDK.
  */
 export async function createStealthSession(
   apiKey: string,
   opts: StealthSessionOptions = {},
 ): Promise<StealthSession> {
-  const body: Record<string, unknown> = {
-    timeout: opts.timeout ?? 15,
-  };
-  if (opts.profileId) body.profileId = opts.profileId;
-  if (opts.proxyCountryCode) body.proxyCountryCode = opts.proxyCountryCode;
+  const client = new BrowserUseClient({ apiKey });
 
-  const resp = await fetch(`${BROWSER_USE_API}/browsers`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+  const session = await client.browsers.createBrowserSession({
+    timeout: opts.timeout ?? 15,
+    profileId: opts.profileId ?? undefined,
+    proxyCountryCode: (opts.proxyCountryCode as any) ?? undefined,
   });
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Browser Use API failed (${resp.status}): ${text}`);
-  }
-
-  const data = await resp.json() as StealthSession;
-  return data;
+  return {
+    id: session.id,
+    status: session.status as "active" | "stopped",
+    cdpUrl: session.cdpUrl ?? "",
+    liveUrl: session.liveUrl ?? "",
+    timeoutAt: session.timeoutAt,
+  };
 }
 
 /**
@@ -77,20 +64,12 @@ export async function stopStealthSession(
   apiKey: string,
   sessionId: string,
 ): Promise<void> {
-  const resp = await fetch(`${BROWSER_USE_API}/browsers/${sessionId}`, {
-    method: "PATCH",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ action: "stop" }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const client = new BrowserUseClient({ apiKey });
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Failed to stop session (${resp.status}): ${text}`);
-  }
+  await client.browsers.updateBrowserSession({
+    session_id: sessionId,
+    action: "stop",
+  });
 }
 
 /**
@@ -100,19 +79,19 @@ export async function getStealthSession(
   apiKey: string,
   sessionId: string,
 ): Promise<StealthSession> {
-  const resp = await fetch(`${BROWSER_USE_API}/browsers/${sessionId}`, {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    signal: AbortSignal.timeout(10_000),
+  const client = new BrowserUseClient({ apiKey });
+
+  const session = await client.browsers.getBrowserSession({
+    session_id: sessionId,
   });
 
-  if (!resp.ok) {
-    throw new Error(`Failed to get session (${resp.status})`);
-  }
-
-  return resp.json() as Promise<StealthSession>;
+  return {
+    id: session.id,
+    status: session.status as "active" | "stopped",
+    cdpUrl: session.cdpUrl ?? "",
+    liveUrl: session.liveUrl ?? "",
+    timeoutAt: session.timeoutAt,
+  };
 }
 
 /**
@@ -122,22 +101,19 @@ export async function listStealthSessions(
   apiKey: string,
   filterBy?: "active" | "stopped",
 ): Promise<StealthSession[]> {
-  const url = new URL(`${BROWSER_USE_API}/browsers`);
-  if (filterBy) url.searchParams.set("filterBy", filterBy);
+  const client = new BrowserUseClient({ apiKey });
 
-  const resp = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    signal: AbortSignal.timeout(10_000),
+  const response = await client.browsers.listBrowserSessions({
+    filterBy: filterBy as any,
   });
 
-  if (!resp.ok) {
-    throw new Error(`Failed to list sessions (${resp.status})`);
-  }
-
-  return resp.json() as Promise<StealthSession[]>;
+  return response.items.map((s) => ({
+    id: s.id,
+    status: s.status as "active" | "stopped",
+    cdpUrl: s.cdpUrl ?? "",
+    liveUrl: s.liveUrl ?? "",
+    timeoutAt: s.timeoutAt,
+  }));
 }
 
 /**
@@ -229,7 +205,7 @@ export async function captureFromStealth(cdpUrl: string): Promise<{
 
     function finalize() {
       // Add any pending requests that didn't get a response
-      for (const pending of pendingRequests.values()) {
+      for (const pending of Array.from(pendingRequests.values())) {
         entries.push(pending as CdpNetworkEntry);
       }
 
