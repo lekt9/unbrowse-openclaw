@@ -866,11 +866,31 @@ const plugin = {
 
               // Accumulate Set-Cookie headers so subsequent calls in the same
               // batch get session tokens set by earlier responses (CSRF, etc.)
+              // Also respect expiry: Max-Age=0 or past Expires deletes the cookie.
               const setCookies = resp.headers.getSetCookie?.() ?? [];
               for (const sc of setCookies) {
-                const match = sc.match(/^([^=]+)=([^;]*)/);
-                if (match) {
-                  cookies[match[1].trim()] = match[2].trim();
+                const nameVal = sc.match(/^([^=]+)=([^;]*)/);
+                if (!nameVal) continue;
+                const cookieName = nameVal[1].trim();
+                const cookieValue = nameVal[2].trim();
+
+                // Check for deletion signals
+                const maxAgeMatch = sc.match(/Max-Age=(\d+)/i);
+                const expiresMatch = sc.match(/Expires=([^;]+)/i);
+                let expired = false;
+
+                if (maxAgeMatch && parseInt(maxAgeMatch[1], 10) === 0) {
+                  expired = true;
+                } else if (expiresMatch) {
+                  try {
+                    expired = new Date(expiresMatch[1]).getTime() < Date.now();
+                  } catch { /* keep it */ }
+                }
+
+                if (expired) {
+                  delete cookies[cookieName];
+                } else {
+                  cookies[cookieName] = cookieValue;
                 }
               }
 
@@ -1046,6 +1066,24 @@ const plugin = {
 
             // Clean up browser session after all calls complete
             await cleanupChrome();
+
+            // Persist accumulated cookies + headers back to auth.json so the
+            // next unbrowse_replay call (or credential refresh) picks them up.
+            // This keeps the session alive across separate tool calls.
+            try {
+              const { writeFileSync } = await import("node:fs");
+              const existing = existsSync(authPath)
+                ? JSON.parse(readFileSync(authPath, "utf-8"))
+                : {};
+              existing.headers = authHeaders;
+              existing.cookies = cookies;
+              existing.baseUrl = baseUrl;
+              existing.lastReplayAt = new Date().toISOString();
+              if (loginConfig) existing.loginConfig = loginConfig;
+              writeFileSync(authPath, JSON.stringify(existing, null, 2), "utf-8");
+            } catch {
+              // Non-critical — session still worked in-memory
+            }
 
             results.push("", `Results: ${passed} passed, ${failed} failed`);
             if (credsRefreshed) {
