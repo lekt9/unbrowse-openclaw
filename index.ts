@@ -134,6 +134,14 @@ const REPLAY_SCHEMA = {
       type: "string" as const,
       description: "Skills directory (default: ~/.clawdbot/skills)",
     },
+    useStealth: {
+      type: "boolean" as const,
+      description: "Use stealth cloud browser with anti-detection to bypass blocks. Costs ~$0.01/call. Auto-enabled on 403/blocked responses.",
+    },
+    proxyCountry: {
+      type: "string" as const,
+      description: "Proxy country code when using stealth (e.g., 'us', 'gb', 'de'). Default: 'us'.",
+    },
   },
   required: ["service"],
 };
@@ -443,7 +451,7 @@ const plugin = {
     const indexClient = new SkillIndexClient(indexOpts);
 
     // Fire-and-forget wallet setup (don't block plugin registration)
-    ensureWallet().catch(() => {});
+    ensureWallet().catch(() => { });
 
     // ── Auto-Publish Helper ────────────────────────────────────────────────
     /** Publish a skill to the cloud index if creatorWallet is configured. */
@@ -493,6 +501,151 @@ const plugin = {
 
     // Track active stealth sessions
     const stealthSessions = new Map<string, StealthSession>();
+
+    // ── Browser Session Tracking ────────────────────────────────────────────
+    // Reuse browser sessions across unbrowse_interact calls instead of launching new browsers each time.
+    // Sessions are keyed by service name and expire after 5 minutes of inactivity.
+    interface BrowserSession {
+      browser: any;
+      context: any;
+      page: any;
+      service: string;
+      lastUsed: Date;
+      method: "cdp-clawdbot" | "cdp-chrome" | "playwright";
+    }
+    const browserSessions = new Map<string, BrowserSession>();
+    const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+    /** Try to connect to a CDP endpoint. Returns browser or null. */
+    async function tryCdpConnect(chromium: any, port: number): Promise<any | null> {
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/json/version`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json() as { webSocketDebuggerUrl?: string };
+        const wsUrl = data.webSocketDebuggerUrl ?? `http://127.0.0.1:${port}`;
+        const browser = await chromium.connectOverCDP(wsUrl, { timeout: 5000 });
+        logger.info(`[unbrowse] Connected to CDP at port ${port}`);
+        return browser;
+      } catch {
+        // CDP not available at this port — silently fall through to next strategy
+        return null;
+      }
+    }
+
+    /** Clean up stale browser sessions. */
+    function cleanupStaleSessions() {
+      const now = Date.now();
+      for (const [key, session] of browserSessions) {
+        if (now - session.lastUsed.getTime() > SESSION_TTL_MS) {
+          session.context?.close().catch(() => {});
+          session.browser?.close().catch(() => {});
+          browserSessions.delete(key);
+          logger.info(`[unbrowse] Cleaned up stale browser session for ${key}`);
+        }
+      }
+    }
+
+    /** Get or create a browser session for a service. Uses CDP cascade. */
+    async function getOrCreateBrowserSession(
+      service: string,
+      url: string,
+      authCookies: Record<string, string>,
+      authHeaders: Record<string, string>,
+    ): Promise<BrowserSession> {
+      // Clean up stale sessions first
+      cleanupStaleSessions();
+
+      // Check for existing session
+      const existing = browserSessions.get(service);
+      if (existing) {
+        existing.lastUsed = new Date();
+        // Verify the browser is still alive
+        try {
+          await existing.page.evaluate(() => true);
+          return existing;
+        } catch {
+          // Browser died, clean up and create new
+          existing.context?.close().catch(() => {});
+          existing.browser?.close().catch(() => {});
+          browserSessions.delete(service);
+        }
+      }
+
+      const { chromium } = await import("playwright");
+
+      // Strategy 1: Connect to clawdbot's managed browser (port 18791)
+      let browser = await tryCdpConnect(chromium, browserPort);
+      let method: BrowserSession["method"] = "cdp-clawdbot";
+
+      // Strategy 2: Connect to Chrome with remote debugging ports
+      if (!browser) {
+        for (const port of [9222, 9229]) {
+          browser = await tryCdpConnect(chromium, port);
+          if (browser) {
+            method = "cdp-chrome";
+            break;
+          }
+        }
+      }
+
+      // Strategy 3: Fall back to fresh Playwright Chromium
+      if (!browser) {
+        browser = await chromium.launch({
+          headless: true,
+          args: [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+          ],
+        });
+        method = "playwright";
+      }
+
+      // Get or create context
+      let context = browser.contexts()[0];
+      if (!context || method === "playwright") {
+        context = await browser.newContext({
+          userAgent:
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        });
+      }
+
+      // Inject cookies for the target domain
+      if (Object.keys(authCookies).length > 0) {
+        try {
+          const domain = new URL(url).hostname;
+          const cookieObjects = Object.entries(authCookies).map(([name, value]) => ({
+            name,
+            value,
+            domain,
+            path: "/",
+          }));
+          await context.addCookies(cookieObjects);
+        } catch { /* non-critical */ }
+      }
+
+      // Inject custom headers
+      if (Object.keys(authHeaders).length > 0) {
+        try {
+          await context.setExtraHTTPHeaders(authHeaders);
+        } catch { /* non-critical */ }
+      }
+
+      const page = await context.newPage();
+      const session: BrowserSession = {
+        browser,
+        context,
+        page,
+        service,
+        lastUsed: new Date(),
+        method,
+      };
+      browserSessions.set(service, session);
+      logger.info(`[unbrowse] Created browser session for ${service} via ${method}`);
+      return session;
+    }
 
     // ── Tools ─────────────────────────────────────────────────────────────
 
@@ -776,13 +929,13 @@ const plugin = {
           name: "unbrowse_replay",
           label: "Execute API",
           description:
-            "Execute API calls using a skill's stored credentials. Automatically tries " +
-            "direct fetch with stored auth headers/cookies. On 401/403, auto-refreshes " +
-            "credentials by re-logging in (if loginConfig saved) and retries. " +
-            "Can test all endpoints or call a specific one.",
+            "Execute API calls using a skill's stored credentials. Uses stealth cloud browser " +
+            "with proxy support (useStealth=true) to bypass anti-bot protection. Falls back to " +
+            "direct fetch with auth headers/cookies. Auto-refreshes credentials on 401/403. " +
+            "Auto-uses stealth fallback when requests are blocked (403/429).",
           parameters: REPLAY_SCHEMA,
           async execute(_toolCallId: string, params: unknown) {
-            const p = params as { service: string; endpoint?: string; body?: string; skillsDir?: string };
+            const p = params as { service: string; endpoint?: string; body?: string; skillsDir?: string; useStealth?: boolean; proxyCountry?: string };
             const skillsDir = p.skillsDir ?? defaultOutputDir;
             const skillDir = join(skillsDir, p.service);
             const authPath = join(skillDir, "auth.json");
@@ -808,46 +961,79 @@ const plugin = {
             } | null = null;
 
             function loadAuth() {
-              if (!existsSync(authPath)) return;
-              try {
-                const auth = JSON.parse(readFileSync(authPath, "utf-8"));
-                authHeaders = auth.headers ?? {};
-                cookies = auth.cookies ?? {};
-                baseUrl = auth.baseUrl ?? baseUrl;
-                loginConfig = auth.loginConfig ?? null;
+              // Try auth.json first
+              if (existsSync(authPath)) {
+                try {
+                  const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+                  authHeaders = auth.headers ?? {};
+                  cookies = auth.cookies ?? {};
+                  baseUrl = auth.baseUrl ?? baseUrl;
+                  loginConfig = auth.loginConfig ?? null;
 
-                // Restore client-side auth tokens (JWTs from localStorage/sessionStorage)
-                // These were captured by session-login from the SPA's browser state.
-                const ls = auth.localStorage as Record<string, string> | undefined;
-                const ss = auth.sessionStorage as Record<string, string> | undefined;
-                const meta = auth.metaTokens as Record<string, string> | undefined;
-                storedLocalStorage = ls ?? {};
-                storedSessionStorage = ss ?? {};
+                  // Restore client-side auth tokens (JWTs from localStorage/sessionStorage)
+                  // These were captured by session-login from the SPA's browser state.
+                  const ls = auth.localStorage as Record<string, string> | undefined;
+                  const ss = auth.sessionStorage as Record<string, string> | undefined;
+                  const meta = auth.metaTokens as Record<string, string> | undefined;
+                  storedLocalStorage = ls ?? {};
+                  storedSessionStorage = ss ?? {};
 
-                for (const [key, value] of [...Object.entries(ls ?? {}), ...Object.entries(ss ?? {})]) {
-                  const lk = key.toLowerCase();
-                  // Promote JWTs to Authorization header
-                  if (value.startsWith("eyJ") || /^Bearer\s/i.test(value)) {
-                    const tokenValue = value.startsWith("eyJ") ? `Bearer ${value}` : value;
-                    if (lk.includes("access") || lk.includes("auth") || lk.includes("token")) {
-                      if (!authHeaders["authorization"]) {
-                        authHeaders["authorization"] = tokenValue;
+                  for (const [key, value] of [...Object.entries(ls ?? {}), ...Object.entries(ss ?? {})]) {
+                    const lk = key.toLowerCase();
+                    // Promote JWTs to Authorization header
+                    if (value.startsWith("eyJ") || /^Bearer\s/i.test(value)) {
+                      const tokenValue = value.startsWith("eyJ") ? `Bearer ${value}` : value;
+                      if (lk.includes("access") || lk.includes("auth") || lk.includes("token")) {
+                        if (!authHeaders["authorization"]) {
+                          authHeaders["authorization"] = tokenValue;
+                        }
                       }
                     }
+                    // Promote CSRF tokens to header
+                    if (lk.includes("csrf") || lk.includes("xsrf")) {
+                      authHeaders["x-csrf-token"] = value;
+                    }
                   }
-                  // Promote CSRF tokens to header
-                  if (lk.includes("csrf") || lk.includes("xsrf")) {
-                    authHeaders["x-csrf-token"] = value;
-                  }
-                }
 
-                for (const [name, value] of Object.entries(meta ?? {})) {
-                  const ln = name.toLowerCase();
-                  if (ln.includes("csrf") || ln.includes("xsrf")) {
-                    authHeaders["x-csrf-token"] = value;
+                  for (const [name, value] of Object.entries(meta ?? {})) {
+                    const ln = name.toLowerCase();
+                    if (ln.includes("csrf") || ln.includes("xsrf")) {
+                      authHeaders["x-csrf-token"] = value;
+                    }
                   }
+                  return; // auth.json loaded successfully
+                } catch { /* try vault fallback */ }
+              }
+
+              // Fallback: try loading from vault
+              try {
+                const { Vault } = require("./src/vault.js");
+                const vault = new Vault(vaultDbPath);
+                const entry = vault.get(p.service);
+                vault.close();
+                if (entry) {
+                  authHeaders = entry.headers ?? {};
+                  cookies = entry.cookies ?? {};
+                  baseUrl = entry.baseUrl ?? baseUrl;
+                  // extra may contain localStorage/sessionStorage tokens
+                  for (const [key, value] of Object.entries(entry.extra ?? {})) {
+                    const lk = key.toLowerCase();
+                    const v = String(value);
+                    if (v.startsWith("eyJ") || /^Bearer\s/i.test(v)) {
+                      const tokenValue = v.startsWith("eyJ") ? `Bearer ${v}` : v;
+                      if (lk.includes("access") || lk.includes("auth") || lk.includes("token")) {
+                        if (!authHeaders["authorization"]) {
+                          authHeaders["authorization"] = tokenValue;
+                        }
+                      }
+                    }
+                    if (lk.includes("csrf") || lk.includes("xsrf")) {
+                      authHeaders["x-csrf-token"] = v;
+                    }
+                  }
+                  logger.info(`[unbrowse] Loaded auth from vault for ${p.service}`);
                 }
-              } catch { /* skip */ }
+              } catch { /* vault not available */ }
             }
             loadAuth();
 
@@ -915,7 +1101,7 @@ const plugin = {
                 }
 
                 chromePage = context.pages()[0] ?? await context.newPage();
-                await chromePage.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+                await chromePage.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => { });
 
                 // Inject stored localStorage/sessionStorage into the page
                 // This restores SPA auth state (JWTs, access tokens) captured during login
@@ -1041,6 +1227,107 @@ const plugin = {
               return { status: resp.status, ok: resp.ok && !isHtml, data: text.slice(0, 2000), isHtml };
             }
 
+            // ── Stealth browser execution (cloud browser with proxy) ───────
+            // Shared stealth session — created once, reused for all calls in batch
+            let stealthSession: StealthSession | null = null;
+            let stealthBrowser: any = null;
+            let stealthPage: any = null;
+
+            async function getStealthPage(): Promise<any | null> {
+              if (stealthPage) return stealthPage;
+              if (!browserUseApiKey) return null;
+
+              try {
+                // Create stealth session if not exists
+                if (!stealthSession) {
+                  stealthSession = await createStealthSession(browserUseApiKey, {
+                    timeout: 15, // 15 min for multi-call sessions
+                    proxyCountryCode: p.proxyCountry ?? "us",
+                  });
+                  logger.info(`[unbrowse] Stealth session started: ${stealthSession.id} (proxy: ${p.proxyCountry ?? "us"})`);
+                }
+
+                // Connect browser if not connected
+                if (!stealthBrowser) {
+                  const { chromium } = await import("playwright");
+                  stealthBrowser = await chromium.connectOverCDP(stealthSession.cdpUrl, { timeout: 15_000 });
+                }
+
+                const context = stealthBrowser.contexts()[0] ?? await stealthBrowser.newContext();
+
+                // Inject cookies
+                if (Object.keys(cookies).length > 0) {
+                  const domain = new URL(baseUrl).hostname;
+                  await context.addCookies(
+                    Object.entries(cookies).map(([name, value]) => ({ name, value, domain, path: "/" }))
+                  );
+                }
+
+                stealthPage = context.pages()[0] ?? await context.newPage();
+
+                // Navigate to base URL first to establish session
+                await stealthPage.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => { });
+
+                // Inject localStorage/sessionStorage
+                if (Object.keys(storedLocalStorage).length > 0 || Object.keys(storedSessionStorage).length > 0) {
+                  await stealthPage.evaluate(({ ls, ss }: { ls: Record<string, string>; ss: Record<string, string> }) => {
+                    for (const [k, v] of Object.entries(ls)) { try { localStorage.setItem(k, v); } catch { } }
+                    for (const [k, v] of Object.entries(ss)) { try { sessionStorage.setItem(k, v); } catch { } }
+                  }, { ls: storedLocalStorage, ss: storedSessionStorage });
+                }
+
+                return stealthPage;
+              } catch (err) {
+                logger.warn(`[unbrowse] Failed to get stealth page: ${(err as Error).message}`);
+                return null;
+              }
+            }
+
+            async function cleanupStealth() {
+              try { await stealthBrowser?.close(); } catch { }
+              if (stealthSession && browserUseApiKey) {
+                try { await stopStealthSession(browserUseApiKey, stealthSession.id); } catch { }
+                logger.info(`[unbrowse] Stealth session stopped: ${stealthSession.id}`);
+              }
+              stealthBrowser = null;
+              stealthPage = null;
+              stealthSession = null;
+            }
+
+            async function execViaStealth(ep: { method: string; path: string }, body?: string): Promise<{ status: number; ok: boolean; data?: string; isHtml?: boolean } | null> {
+              const page = await getStealthPage();
+              if (!page) return null;
+
+              try {
+                const url = new URL(ep.path, baseUrl).toString();
+                const result = await page.evaluate(async ({ url, method, headers, body }: { url: string; method: string; headers: Record<string, string>; body?: string }) => {
+                  try {
+                    const resp = await fetch(url, {
+                      method,
+                      headers: { "Content-Type": "application/json", ...headers },
+                      body: body && ["POST", "PUT", "PATCH"].includes(method) ? body : undefined,
+                      credentials: "include",
+                    });
+                    const text = await resp.text().catch(() => "");
+                    const ct = resp.headers.get("content-type") ?? "";
+                    return {
+                      status: resp.status,
+                      ok: resp.ok,
+                      data: text.slice(0, 2000),
+                      isHtml: ct.includes("text/html"),
+                    };
+                  } catch (err) {
+                    return { status: 0, ok: false, data: String(err), isHtml: false };
+                  }
+                }, { url, method: ep.method, headers: authHeaders, body });
+
+                return result;
+              } catch (err) {
+                logger.warn(`[unbrowse] Stealth execution failed: ${(err as Error).message}`);
+                return null;
+              }
+            }
+
             // ── Credential refresh on 401/403 ──────────────────────────
 
             let credsRefreshed = false;
@@ -1102,7 +1389,7 @@ const plugin = {
                   const context = browser.contexts()[0];
                   if (context) {
                     const page = context.pages()[0] ?? await context.newPage();
-                    await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+                    await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => { });
 
                     const browserCookies = await context.cookies();
                     const freshCookies: Record<string, string> = {};
@@ -1145,34 +1432,52 @@ const plugin = {
             const toTest = endpoints.slice(0, p.endpoint ? 1 : 10);
             results.push(`Executing ${p.service} (${toTest.length} endpoint${toTest.length > 1 ? "s" : ""})`, `Base: ${baseUrl}`, "");
 
+            let usedStealth = false;
+
             for (const ep of toTest) {
               const body = p.body ?? (["POST", "PUT", "PATCH"].includes(ep.method) ? "{}" : undefined);
+              let result: { status: number; ok: boolean; data?: string; isHtml?: boolean } | null = null;
 
-              // Try 1: Chrome profile (live cookies)
-              let result = await execInChrome(ep, body);
-              if (result && result.ok) {
-                results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (Chrome)`);
-                if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
-                passed++;
-                continue;
-              }
-
-              // Try 2: Direct fetch with stored auth
-              try {
-                result = await execViaFetch(ep, body);
-                if (result.isHtml) {
-                  // Got an HTML page instead of API data — this is a frontend route, not an API endpoint
-                  results.push(`  ${ep.method} ${ep.path} → ${result.status} (HTML page, not an API endpoint)`);
-                  failed++;
+              // If useStealth is explicitly requested, try stealth first
+              if (p.useStealth) {
+                result = await execViaStealth(ep, body);
+                if (result && result.ok) {
+                  results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (stealth${p.proxyCountry ? ` via ${p.proxyCountry}` : ""})`);
+                  if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
+                  passed++;
+                  usedStealth = true;
                   continue;
                 }
-                if (result.ok) {
-                  results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (direct)`);
+              }
+
+              // Try 1: Chrome profile (live cookies)
+              if (!p.useStealth) {
+                result = await execInChrome(ep, body);
+                if (result && result.ok) {
+                  results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (Chrome)`);
                   if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
                   passed++;
                   continue;
                 }
-              } catch { /* fall through */ }
+              }
+
+              // Try 2: Direct fetch with stored auth
+              if (!p.useStealth) {
+                try {
+                  result = await execViaFetch(ep, body);
+                  if (result.isHtml) {
+                    results.push(`  ${ep.method} ${ep.path} → ${result.status} (HTML page, not an API endpoint)`);
+                    failed++;
+                    continue;
+                  }
+                  if (result.ok) {
+                    results.push(`  ${ep.method} ${ep.path} → ${result.status} OK (direct)`);
+                    if (p.endpoint && result.data) results.push(`  Response: ${result.data.slice(0, 500)}`);
+                    passed++;
+                    continue;
+                  }
+                } catch { /* fall through */ }
+              }
 
               // Try 3: If 401/403, refresh creds and retry
               const status = result?.status ?? 0;
@@ -1180,7 +1485,6 @@ const plugin = {
                 results.push(`  ${ep.method} ${ep.path} → ${status} — refreshing credentials...`);
                 const refreshed = await refreshCreds();
                 if (refreshed) {
-                  // Retry with fresh creds
                   try {
                     result = await execViaFetch(ep, body);
                     if (result.ok) {
@@ -1196,12 +1500,25 @@ const plugin = {
                 } else {
                   results.push(`  Credential refresh unavailable — no loginConfig in auth.json and no Chrome profile`);
                 }
-                failed++;
-              } else {
-                // Not a 401/403, or already tried refresh
-                results.push(`  ${ep.method} ${ep.path} → ${status || "FAILED"}`);
-                failed++;
               }
+
+              // Try 4: Stealth fallback for blocked requests (403, 429, connection errors)
+              const blockedStatus = status === 403 || status === 429 || status === 0;
+              if (blockedStatus && !p.useStealth && browserUseApiKey) {
+                results.push(`  ${ep.method} ${ep.path} → ${status || "blocked"} — trying stealth browser...`);
+                const stealthResult = await execViaStealth(ep, body);
+                if (stealthResult && stealthResult.ok) {
+                  results.push(`  ${ep.method} ${ep.path} → ${stealthResult.status} OK (stealth fallback)`);
+                  if (p.endpoint && stealthResult.data) results.push(`  Response: ${stealthResult.data.slice(0, 500)}`);
+                  passed++;
+                  usedStealth = true;
+                  continue;
+                }
+              }
+
+              // All strategies failed
+              results.push(`  ${ep.method} ${ep.path} → ${status || "FAILED"}`);
+              failed++;
             }
 
             // Capture updated client-side state from the browser before cleanup
@@ -1232,8 +1549,9 @@ const plugin = {
               } catch { /* page may be gone */ }
             }
 
-            // Clean up browser session after capturing state
+            // Clean up browser sessions after capturing state
             await cleanupChrome();
+            await cleanupStealth();
 
             // Persist accumulated cookies + headers + storage back to auth.json so the
             // next unbrowse_replay call (or credential refresh) picks them up.
@@ -1256,11 +1574,14 @@ const plugin = {
             }
 
             results.push("", `Results: ${passed} passed, ${failed} failed`);
+            if (usedStealth) {
+              results.push(`Used stealth cloud browser${p.proxyCountry ? ` (proxy: ${p.proxyCountry})` : ""}`);
+            }
             if (credsRefreshed) {
               results.push(`Credentials were refreshed and saved to auth.json`);
             }
-            if (failed > 0 && !credsRefreshed && !loginConfig) {
-              results.push(`Tip: use unbrowse_login to store login credentials for auto-refresh on expiry`);
+            if (failed > 0 && !credsRefreshed && !loginConfig && !usedStealth) {
+              results.push(`Tip: use useStealth=true to bypass anti-bot protection, or unbrowse_login to store credentials`);
             }
             return { content: [{ type: "text", text: results.join("\n") }] };
           },
@@ -1382,7 +1703,7 @@ const plugin = {
                       });
 
                       const navPage = ctx.pages()[0] ?? await ctx.newPage();
-                      await navPage.goto(p.url, { waitUntil: "networkidle", timeout: 30_000 }).catch(() => {});
+                      await navPage.goto(p.url, { waitUntil: "networkidle", timeout: 30_000 }).catch(() => { });
                       await navPage.waitForTimeout(3000);
 
                       // Extract cookies
@@ -1910,6 +2231,32 @@ const plugin = {
               const ssCount = Object.keys(result.sessionStorage).length;
               const metaCount = Object.keys(result.metaTokens).length;
               const hasAnyAuth = cookieCount > 0 || authHeaderCount > 0 || lsCount > 0 || ssCount > 0;
+
+              // Also store the captured session auth in the vault (independent of credential provider)
+              // This stores cookies/headers/tokens for API replay even without login credentials
+              if (p.saveCredentials !== false && hasAnyAuth) {
+                try {
+                  const { Vault } = await import("./src/vault.js");
+                  const vault = new Vault(vaultDbPath);
+                  vault.store(service, {
+                    baseUrl: result.baseUrl,
+                    authMethod: authHeaderCount > 0 ? "header" : "cookie",
+                    headers: result.authHeaders,
+                    cookies: result.cookies,
+                    extra: {
+                      ...result.localStorage,
+                      ...result.sessionStorage,
+                      ...result.metaTokens,
+                    },
+                    notes: `Captured via unbrowse_login at ${new Date().toISOString()}`,
+                  });
+                  vault.close();
+                  logger.info(`[unbrowse] Stored session auth in vault for ${service}`);
+                } catch (vaultErr) {
+                  // Vault may not be initialized — non-critical
+                  logger.warn(`[unbrowse] Could not store in vault: ${(vaultErr as Error).message}`);
+                }
+              }
               const summary = [
                 `Session captured via ${backend}`,
                 `Service: ${service}`,
@@ -2167,7 +2514,7 @@ const plugin = {
               }
             }
 
-            // Load auth from skill's auth.json
+            // Load auth from skill's auth.json (with vault fallback)
             const skillDir = join(defaultOutputDir, service);
             const authPath = join(skillDir, "auth.json");
             let authHeaders: Record<string, string> = {};
@@ -2175,6 +2522,7 @@ const plugin = {
             let storedLocalStorage: Record<string, string> = {};
             let storedSessionStorage: Record<string, string> = {};
             let baseUrl = "";
+            let authSource = "none";
 
             if (existsSync(authPath)) {
               try {
@@ -2184,53 +2532,62 @@ const plugin = {
                 baseUrl = auth.baseUrl ?? "";
                 storedLocalStorage = auth.localStorage ?? {};
                 storedSessionStorage = auth.sessionStorage ?? {};
-              } catch { /* proceed without auth */ }
+                authSource = "auth.json";
+              } catch { /* try vault fallback */ }
             }
 
-            // Launch local Playwright (NOT stealth — stealth is for API execution only)
+            // Fallback: try loading from vault if auth.json is missing or empty
+            if (Object.keys(authCookies).length === 0 && Object.keys(authHeaders).length === 0) {
+              try {
+                const { Vault } = require("./src/vault.js");
+                const vault = new Vault(vaultDbPath);
+                const entry = vault.get(service);
+                vault.close();
+                if (entry) {
+                  authHeaders = entry.headers ?? {};
+                  authCookies = entry.cookies ?? {};
+                  baseUrl = entry.baseUrl ?? "";
+                  // extra contains localStorage/sessionStorage tokens
+                  for (const [key, value] of Object.entries(entry.extra ?? {})) {
+                    storedLocalStorage[key] = String(value);
+                  }
+                  authSource = "vault";
+                  logger.info(`[unbrowse] Loaded auth from vault for ${service}`);
+                }
+              } catch { /* vault not available */ }
+            }
+
+            // Get or reuse browser session — uses CDP cascade:
+            // 1. Try clawdbot managed browser (port 18791) — has existing cookies/auth
+            // 2. Try Chrome remote debugging (9222, 9229)
+            // 3. Fall back to fresh Playwright Chromium
+            let session: BrowserSession | null = null;
             let browser: any = null;
             let context: any = null;
             let page: any = null;
+            let isReusedSession = false;
 
             try {
-              const { chromium } = await import("playwright");
+              // Check if we already have a session before creating one
+              isReusedSession = browserSessions.has(service);
+              session = await getOrCreateBrowserSession(service, p.url, authCookies, authHeaders);
+              browser = session.browser;
+              context = session.context;
+              page = session.page;
 
-              browser = await chromium.launch({
-                headless: true,
-                args: [
-                  "--disable-blink-features=AutomationControlled",
-                  "--no-sandbox",
-                  "--disable-dev-shm-usage",
-                ],
-              });
-
-              context = await browser.newContext({
-                userAgent:
-                  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              });
-
-              // Inject cookies
-              if (Object.keys(authCookies).length > 0) {
-                try {
-                  const domain = new URL(p.url).hostname;
-                  const cookieObjects = Object.entries(authCookies).map(([name, value]) => ({
-                    name,
-                    value,
-                    domain,
-                    path: "/",
-                  }));
-                  await context.addCookies(cookieObjects);
-                } catch { /* non-critical */ }
+              if (isReusedSession) {
+                logger.info(`[unbrowse] Reusing browser session for ${service} (${session.method})`);
               }
 
-              // Inject custom headers
-              if (Object.keys(authHeaders).length > 0) {
-                try {
-                  await context.setExtraHTTPHeaders(authHeaders);
-                } catch { /* non-critical */ }
+              // If this is an existing session, we may need to navigate to a new page
+              // Check if current URL matches target - if not, navigate
+              const currentUrl = page.url();
+              const targetOrigin = new URL(p.url).origin;
+              if (!currentUrl.startsWith(targetOrigin)) {
+                // Need a fresh page for this different origin
+                page = await context.newPage();
+                session.page = page;
               }
-
-              page = await context.newPage();
 
               // Capture API traffic — full HAR entries for skill generation
               const shouldCapture = p.captureTraffic !== false;
@@ -2534,7 +2891,7 @@ const plugin = {
                     }
 
                     case "go_back": {
-                      await page.goBack({ waitUntil: "networkidle", timeout: 15_000 }).catch(() => {});
+                      await page.goBack({ waitUntil: "networkidle", timeout: 15_000 }).catch(() => { });
                       pageState = await extractPageState(page);
                       actionResults.push("go_back: done");
                       break;
@@ -2603,9 +2960,11 @@ const plugin = {
                 writeFileSync(authPath, JSON.stringify(existing, null, 2), "utf-8");
               } catch { /* non-critical */ }
 
-              // Clean up browser
-              await context?.close().catch(() => {});
-              await browser?.close().catch(() => {});
+              // Update session timestamp (don't close — reuse across calls)
+              // Browser will be cleaned up after SESSION_TTL_MS inactivity
+              if (session) {
+                session.lastUsed = new Date();
+              }
 
               const apiCalls = capturedRequests.filter(
                 (r) => r.resourceType === "xhr" || r.resourceType === "fetch",
@@ -2641,7 +3000,7 @@ const plugin = {
 
                   // Auto-publish if changed
                   if (result.changed) {
-                    autoPublishSkill(result.service, result.skillDir).catch(() => {});
+                    autoPublishSkill(result.service, result.skillDir).catch(() => { });
                   }
                 } catch (err) {
                   logger.warn(`[unbrowse] Interact skill generation failed: ${(err as Error).message}`);
@@ -2650,8 +3009,12 @@ const plugin = {
 
               // Build result: page state + action results + API traffic + skill
               const formattedPageState = formatPageStateForLLM(pageState);
+              const sessionInfo = session
+                ? `Browser: ${session.method}${isReusedSession ? " (reused session)" : " (new session)"}${authSource !== "none" ? `, auth: ${authSource}` : ""}`
+                : "";
               const resultLines = [
                 `Interaction complete: ${p.actions.length} action(s)`,
+                sessionInfo,
                 "",
                 formattedPageState,
                 "",
@@ -2687,8 +3050,13 @@ const plugin = {
               return { content: [{ type: "text", text: resultLines.join("\n") }] };
             } catch (err) {
               const msg = (err as Error).message;
-              await context?.close().catch(() => {});
-              await browser?.close().catch(() => {});
+              // On error, invalidate the session so next call gets fresh browser
+              if (service && browserSessions.has(service)) {
+                const deadSession = browserSessions.get(service)!;
+                deadSession.context?.close().catch(() => { });
+                deadSession.browser?.close().catch(() => { });
+                browserSessions.delete(service);
+              }
               if (msg.includes("playwright")) {
                 return {
                   content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }],
@@ -2750,7 +3118,7 @@ const plugin = {
     // 2. Proactively tells the user about their wallet and prompts them to fund it
     api.on("before_agent_start", async () => {
       // Wait for wallet generation to complete (may still be running)
-      await ensureWallet().catch(() => {});
+      await ensureWallet().catch(() => { });
 
       const lines: string[] = [
         "[Unbrowse] You have self-learning browser skills.",
