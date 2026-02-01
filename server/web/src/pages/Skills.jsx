@@ -55,14 +55,18 @@ export default function Skills() {
 
   useEffect(() => {
     loadMarketplaceSkills();
-  }, []);
+  }, [categoryFilter]);
 
   const loadMarketplaceSkills = async (query = '') => {
     setLoading(true);
     try {
-      const url = query.trim()
-        ? `${API_BASE}/marketplace/skills?q=${encodeURIComponent(query)}&limit=100`
-        : `${API_BASE}/marketplace/skills?limit=100`;
+      let url = `${API_BASE}/marketplace/skills?limit=100`;
+      if (query.trim()) {
+        url += `&q=${encodeURIComponent(query)}`;
+      }
+      if (categoryFilter !== 'all') {
+        url += `&category=${encodeURIComponent(categoryFilter)}`;
+      }
 
       const res = await fetch(url);
       if (res.ok) {
