@@ -2345,6 +2345,71 @@ a {
   font-weight: 500;
 }
 
+/* Install Command */
+.ub-install-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 32px;
+  padding: 16px 24px;
+  background: rgba(0, 255, 136, 0.05);
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  border-radius: 8px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ub-install-cmd code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.95rem;
+  color: var(--accent);
+  letter-spacing: 0;
+  user-select: all;
+}
+
+.ub-copy-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.ub-copy-cmd:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+.ub-copy-cmd.copied {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+.ub-copy-cmd.copied::after {
+  content: '✓';
+  position: absolute;
+}
+
+.ub-copy-cmd.copied svg {
+  opacity: 0;
+}
+
+.ub-copy-cmd svg {
+  width: 18px;
+  height: 18px;
+}
+
 .ub-hero-actions {
   display: flex;
   justify-content: center;
@@ -3103,6 +3168,18 @@ a {
   .ub-hero {
     padding: 100px 16px 60px;
     min-height: auto;
+  }
+
+  .ub-install-cmd {
+    flex-direction: column;
+    padding: 12px 16px;
+    gap: 8px;
+  }
+
+  .ub-install-cmd code {
+    font-size: 0.75rem;
+    word-break: break-all;
+    text-align: center;
   }
 
   .ub-terminal {
