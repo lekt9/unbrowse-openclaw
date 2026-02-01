@@ -51,6 +51,7 @@ export default function Skills() {
   const [search, setSearch] = useState('');
   const [stats, setStats] = useState({ total: 0, services: 0, downloads: 0 });
   const [activeFilter, setActiveFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   useEffect(() => {
     loadMarketplaceSkills();
@@ -100,6 +101,11 @@ export default function Skills() {
     if (activeFilter === 'free') return parseFloat(skill.priceUsdc || '0') === 0;
     if (activeFilter === 'paid') return parseFloat(skill.priceUsdc || '0') > 0;
     return true;
+  }).filter(skill => {
+    if (categoryFilter === 'all') return true;
+    if (categoryFilter === 'api-package') return skill.category === 'api-package' || !skill.category;
+    if (categoryFilter === 'workflow') return skill.category === 'workflow';
+    return true;
   });
 
   const sortedSkills = [...filteredSkills].sort((a, b) => (b.downloadCount || 0) - (a.downloadCount || 0));
@@ -129,8 +135,8 @@ export default function Skills() {
           </h1>
 
           <p className="ub-tagline">
-            Capture any website's API traffic. Auto-generate reusable skills.
-            <strong> Publish to marketplace. Earn USDC on every download.</strong>
+            Capture APIs. Record cross-site workflows. Share what works.
+            <strong> Earn USDC on every successful execution.</strong>
           </p>
 
           <div className="ub-hero-actions">
@@ -266,6 +272,17 @@ export default function Skills() {
 
           <div className="ub-marketplace-controls">
             <div className="ub-filter-tabs">
+              {['all', 'api-package', 'workflow'].map(f => (
+                <button
+                  key={f}
+                  className={`ub-filter-tab ${categoryFilter === f ? 'active' : ''}`}
+                  onClick={() => setCategoryFilter(f)}
+                >
+                  {f === 'api-package' ? 'APIs' : f === 'workflow' ? 'WORKFLOWS' : 'ALL'}
+                </button>
+              ))}
+            </div>
+            <div className="ub-filter-tabs" style={{ marginLeft: '1rem' }}>
               {['all', 'free', 'paid'].map(f => (
                 <button
                   key={f}
@@ -319,9 +336,9 @@ export default function Skills() {
 
                   <div className="ub-card-header">
                     <div className="ub-card-tags">
-                      {skill.category && (
-                        <span className="ub-tag ub-tag-cat">{skill.category}</span>
-                      )}
+                      <span className={`ub-tag ${skill.category === 'workflow' ? 'ub-tag-workflow' : 'ub-tag-api'}`}>
+                        {skill.category === 'workflow' ? 'WORKFLOW' : 'API'}
+                      </span>
                       {skill.authType && skill.authType !== 'none' && (
                         <span className="ub-tag ub-tag-auth">{skill.authType}</span>
                       )}
