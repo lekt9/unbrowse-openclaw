@@ -117,7 +117,7 @@ export default function Skills() {
         <div className="ub-hero-content">
           <div className="ub-hero-badge">
             <span className="ub-pulse" />
-            <span>REVERSE ENGINEERING FOR AI AGENTS</span>
+            <span>OPEN SOURCE API REVERSE ENGINEERING FOR OPENCLAW</span>
           </div>
 
           <h1 className="ub-headline">
