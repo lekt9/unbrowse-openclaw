@@ -3154,3 +3154,52 @@ a {
     gap: 20px;
   }
 }
+
+/* Copy Page Button */
+.ub-copy-page-btn {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  font-family: 'Syncopate', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.ub-copy-page-btn:hover {
+  background: var(--accent);
+  color: #000;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 255, 136, 0.3);
+}
+
+.ub-copy-page-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ub-copy-page-btn span {
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .ub-copy-page-btn span {
+    display: none;
+  }
+
+  .ub-copy-page-btn {
+    padding: 12px;
+  }
+}

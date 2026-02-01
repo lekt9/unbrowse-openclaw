@@ -3,10 +3,66 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Reverse Engineer - API Discovery Platform</title>
+    <title>Unbrowse - Open Source API Reverse Engineering</title>
+    <meta name="description" content="Capture any API, generate skills for AI agents, earn USDC on every download." />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <!-- Copy page as markdown for LLMs (Cmd+Shift+C) -->
+    <script>
+      (function() {
+        document.addEventListener('keydown', function(e) {
+          // Cmd+Shift+C (Mac) or Ctrl+Shift+C (Windows)
+          if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'c') {
+            e.preventDefault();
+            copyPageAsMarkdown();
+          }
+        });
+
+        window.copyPageAsMarkdown = function() {
+          const main = document.querySelector('main') || document.querySelector('#root');
+          if (!main) return;
+
+          // Convert to markdown-ish text
+          const clone = main.cloneNode(true);
+
+          // Remove scripts, styles, nav elements
+          clone.querySelectorAll('script, style, nav, header, footer, .ub-terminal, canvas').forEach(el => el.remove());
+
+          // Get text content with some structure
+          let markdown = '# ' + document.title + '\n\n';
+          markdown += 'URL: ' + window.location.href + '\n\n';
+          markdown += '---\n\n';
+
+          // Process headings and content
+          clone.querySelectorAll('h1, h2, h3, h4, p, li, code, pre').forEach(el => {
+            const tag = el.tagName.toLowerCase();
+            const text = el.textContent.trim();
+            if (!text) return;
+
+            if (tag === 'h1') markdown += '# ' + text + '\n\n';
+            else if (tag === 'h2') markdown += '## ' + text + '\n\n';
+            else if (tag === 'h3') markdown += '### ' + text + '\n\n';
+            else if (tag === 'h4') markdown += '#### ' + text + '\n\n';
+            else if (tag === 'li') markdown += '- ' + text + '\n';
+            else if (tag === 'pre' || tag === 'code') markdown += '```\n' + text + '\n```\n\n';
+            else markdown += text + '\n\n';
+          });
+
+          navigator.clipboard.writeText(markdown).then(() => {
+            // Show toast
+            const toast = document.createElement('div');
+            toast.textContent = '✓ Page copied as markdown';
+            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#00ff88;color:#000;padding:12px 20px;border-radius:4px;font-family:monospace;font-weight:bold;z-index:9999;animation:fadeout 2s forwards';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+          });
+        };
+      })();
+    </script>
+    <style>
+      @keyframes fadeout { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+    </style>
   </body>
 </html>
