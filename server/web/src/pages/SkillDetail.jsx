@@ -61,6 +61,9 @@ export default function SkillDetail() {
     );
   }
 
+  const price = parseFloat(skill.priceUsdc || '0');
+  const isFree = price === 0;
+
   const searchCommand = `unbrowse_search query="${skill.name}"`;
   const installCommand = `unbrowse_search install="${skill.skillId}"`;
   const replayCommand = `unbrowse_replay service="${skill.name}" endpoint="<endpoint-name>" params={...}`;
@@ -114,38 +117,80 @@ export default function SkillDetail() {
         </div>
       </div>
 
-      {/* Paywall Section - Premium purchase gate */}
-      <section className="paywall-section">
-        <div className="paywall-content">
-          <div className="paywall-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0110 0v4" />
-            </svg>
+      {/* Free Skill Section or Paywall */}
+      {isFree ? (
+        <section className="free-skill-section">
+          <div className="free-skill-content">
+            <div className="free-skill-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <div className="free-skill-text">
+              <h3>Free Skill</h3>
+              <p>
+                This skill is completely free to use. Install it directly in Claude Code or OpenClaw.
+                No wallet or payment required.
+              </p>
+            </div>
+            <div className="free-skill-badge">
+              <span className="free-badge-text">FREE</span>
+            </div>
+            <div className="free-skill-install">
+              <div className="code-block">
+                <code>{installCommand}</code>
+                <button
+                  className={`copy-btn ${copiedStep === 'free-install' ? 'copied' : ''}`}
+                  onClick={() => copyToClipboard(installCommand, 'free-install')}
+                >
+                  {copiedStep === 'free-install' ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="paywall-text">
-            <h3>Full Skill Package</h3>
-            <p>
-              Get complete access to SKILL.md documentation, API scripts,
-              and reference materials. Includes all endpoints and implementation code.
-            </p>
+        </section>
+      ) : (
+        <section className="paywall-section">
+          <div className="paywall-content">
+            <div className="paywall-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+            </div>
+            <div className="paywall-text">
+              <h3>Full Skill Package</h3>
+              <p>
+                Get complete access to SKILL.md documentation, API scripts,
+                and reference materials. Includes all endpoints and implementation code.
+              </p>
+            </div>
+            <div className="paywall-price">
+              <span className="price-amount">${price.toFixed(2)}</span>
+              <span className="price-currency">USDC</span>
+            </div>
+            <button className="btn btn-purchase" onClick={handlePurchase}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 6v12M6 12h12" />
+              </svg>
+              Purchase Skill
+            </button>
+            <div className="paywall-split">
+              Revenue split: Creator 33% • Platform 33% • Network 34%
+            </div>
           </div>
-          <div className="paywall-price">
-            <span className="price-amount">${parseFloat(skill.priceUsdc || '1.00').toFixed(2)}</span>
-            <span className="price-currency">USDC</span>
-          </div>
-          <button className="btn btn-purchase" onClick={handlePurchase}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v12M6 12h12" />
-            </svg>
-            Purchase Skill
-          </button>
-          <div className="paywall-split">
-            Revenue split: Creator 33% • Platform 33% • Network 34%
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* How to Use - Actual unbrowse workflow */}
       <section className="detail-section">
@@ -185,7 +230,7 @@ export default function SkillDetail() {
             <span className="step-num">2</span>
             <div className="step-body">
               <h3>Install the skill</h3>
-              <p className="step-description">Download and save to your local skills directory (${parseFloat(skill.priceUsdc || '1.00').toFixed(2)} USDC)</p>
+              <p className="step-description">Download and save to your local skills directory{isFree ? ' (Free)' : ` ($${price.toFixed(2)} USDC)`}</p>
               <div className="code-block">
                 <code>{installCommand}</code>
                 <button
@@ -263,18 +308,20 @@ export default function SkillDetail() {
               <span>Install in Claude Code or OpenClaw</span>
             </div>
           </div>
-          <div className="prereq-item">
-            <div className="prereq-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v6l4 2" />
-              </svg>
+          {!isFree && (
+            <div className="prereq-item">
+              <div className="prereq-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+              </div>
+              <div className="prereq-content">
+                <strong>Solana Wallet</strong>
+                <span>USDC balance for skill purchases</span>
+              </div>
             </div>
-            <div className="prereq-content">
-              <strong>Solana Wallet</strong>
-              <span>USDC balance for skill purchases</span>
-            </div>
-          </div>
+          )}
           {skill.authType && skill.authType !== 'none' && (
             <div className="prereq-item">
               <div className="prereq-icon">

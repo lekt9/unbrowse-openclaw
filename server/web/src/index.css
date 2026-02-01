@@ -1426,6 +1426,90 @@ a {
 }
 
 /* ============================================
+   FREE SKILL SECTION
+   ============================================ */
+
+.free-skill-section {
+  background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(6, 182, 212, 0.08) 100%);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.free-skill-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+}
+
+.free-skill-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.free-skill-icon {
+  width: 64px;
+  height: 64px;
+  background: var(--bg-elevated);
+  border: 2px solid var(--accent-primary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+}
+
+.free-skill-text h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--accent-primary);
+}
+
+.free-skill-text p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  max-width: 480px;
+  margin: 0;
+}
+
+.free-skill-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.free-badge-text {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--accent-primary);
+  letter-spacing: 0.05em;
+}
+
+.free-skill-install {
+  width: 100%;
+  max-width: 500px;
+  margin-top: 8px;
+}
+
+.free-skill-install .code-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-primary);
+}
+
+/* ============================================
    ENHANCED QUICK START
    ============================================ */
 
@@ -2874,6 +2958,133 @@ a {
   background: var(--border-default);
 }
 
+/* ── FEATURED FREE SKILLS ─────────────────────────────────────────────────── */
+
+.ub-free-skills {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 60px 24px;
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 255, 136, 0.02) 50%, transparent 100%);
+}
+
+.ub-free-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.ub-free-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid var(--accent-primary);
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent-primary);
+  margin-bottom: 16px;
+}
+
+.ub-free-badge svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ub-free-header h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0 0 12px;
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.ub-free-header p {
+  color: var(--text-secondary);
+  font-size: 1rem;
+  margin: 0;
+}
+
+.ub-free-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.ub-free-card {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.25s ease;
+  overflow: hidden;
+}
+
+.ub-free-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+}
+
+.ub-free-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 255, 136, 0.15);
+  border-color: var(--accent-primary);
+}
+
+.ub-free-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ub-free-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  background: var(--accent-primary);
+  color: var(--bg-base);
+  border-radius: 100px;
+  letter-spacing: 0.05em;
+}
+
+.ub-free-card h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+
+.ub-free-card p {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0 0 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ub-free-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* ── MARKETPLACE ──────────────────────────────────────────────────────────── */
 
 .ub-marketplace {
@@ -3342,6 +3553,18 @@ a {
   }
 
   .ub-value-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ub-free-skills {
+    padding: 40px 16px;
+  }
+
+  .ub-free-header h2 {
+    font-size: 1.5rem;
+  }
+
+  .ub-free-grid {
     grid-template-columns: 1fr;
   }
 

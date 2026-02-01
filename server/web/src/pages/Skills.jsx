@@ -50,7 +50,7 @@ export default function Skills() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [stats, setStats] = useState({ total: 0, services: 0, downloads: 0 });
-  const [activeFilter, setActiveFilter] = useState('all');
+  const [activeFilter, setActiveFilter] = useState('free');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
   useEffect(() => {
@@ -112,7 +112,19 @@ export default function Skills() {
     return true;
   });
 
-  const sortedSkills = [...filteredSkills].sort((a, b) => (b.downloadCount || 0) - (a.downloadCount || 0));
+  // Sort: free skills first, then by downloads
+  const sortedSkills = [...filteredSkills].sort((a, b) => {
+    const aFree = parseFloat(a.priceUsdc || '0') === 0;
+    const bFree = parseFloat(b.priceUsdc || '0') === 0;
+    if (aFree !== bFree) return aFree ? -1 : 1;
+    return (b.downloadCount || 0) - (a.downloadCount || 0);
+  });
+
+  // Get free skills for featured section
+  const freeSkills = skills
+    .filter(s => parseFloat(s.priceUsdc || '0') === 0)
+    .sort((a, b) => (b.downloadCount || 0) - (a.downloadCount || 0))
+    .slice(0, 6);
 
   return (
     <div className="ub-page">
@@ -285,6 +297,51 @@ export default function Skills() {
           <div className="ub-stat-text">INSTANT<br/>PAYOUTS</div>
         </div>
       </section>
+
+      {/* Featured Free Skills */}
+      {freeSkills.length > 0 && (
+        <section className="ub-free-skills">
+          <div className="ub-free-header">
+            <div className="ub-free-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              </svg>
+              FREE TO USE
+            </div>
+            <h2>Start Building Now</h2>
+            <p>These skills are completely free. No wallet required. Just install and use.</p>
+          </div>
+          <div className="ub-free-grid">
+            {freeSkills.map((skill) => (
+              <Link
+                key={skill.skillId}
+                to={`/skill/${skill.skillId}`}
+                className="ub-free-card"
+              >
+                <div className="ub-free-card-header">
+                  <span className={`ub-tag ${skill.category === 'workflow' ? 'ub-tag-workflow' : 'ub-tag-api'}`}>
+                    {skill.category === 'workflow' ? 'WORKFLOW' : 'API'}
+                  </span>
+                  <span className="ub-free-tag">FREE</span>
+                </div>
+                <h3>{skill.name}</h3>
+                <p>{skill.description || 'No description available'}</p>
+                <div className="ub-free-card-footer">
+                  <span className="ub-card-domain">{skill.domain || skill.serviceName || 'API'}</span>
+                  {skill.downloadCount > 0 && (
+                    <span className="ub-card-downloads">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                      </svg>
+                      {skill.downloadCount.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Marketplace */}
       <section className="ub-marketplace">
