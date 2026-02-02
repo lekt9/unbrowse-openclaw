@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 
 const API_BASE = 'https://index.unbrowse.ai';
 
@@ -188,6 +189,16 @@ export default function SkillDetail() {
             <div className="paywall-split">
               Revenue split: Creator 70% • Platform 30%
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* Skill Content (for free skills) */}
+      {skill.skillMd && (
+        <section className="detail-section skill-content-section">
+          <h2>SKILL.md</h2>
+          <div className="skill-md-content">
+            <ReactMarkdown>{skill.skillMd}</ReactMarkdown>
           </div>
         </section>
       )}

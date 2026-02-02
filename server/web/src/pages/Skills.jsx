@@ -7,12 +7,12 @@ const API_BASE = 'https://index.unbrowse.ai';
 function ChatDemo() {
   const [step, setStep] = useState(0);
   const messages = [
-    { type: 'user', text: 'check my meteora positions' },
-    { type: 'assistant', text: 'browsing meteora.ag now...' },
+    { type: 'user', text: 'generate a song on suno' },
+    { type: 'assistant', text: 'browsing suno.com now...' },
     { type: 'status', text: 'Unbrowse: Learning API from browser traffic' },
-    { type: 'assistant', text: 'Found 3 positions ($420.69)\n\nSkill learned: meteora-dlmm' },
-    { type: 'user', text: 'check again' },
-    { type: 'assistant', text: 'Using API directly... 50ms\n\n3 positions, $421.12' },
+    { type: 'assistant', text: 'Song created: "Midnight Dreams"\n\nSkill learned: suno-generate' },
+    { type: 'user', text: 'make another one' },
+    { type: 'assistant', text: 'Using API directly... 50ms\n\nSong queued: "Ocean Waves"' },
     { type: 'user', text: 'publish the skill for $1' },
     { type: 'assistant', text: 'Published to marketplace. You earn $0.70 per download.' },
   ];

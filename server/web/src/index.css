@@ -1762,3 +1762,126 @@ button {
     padding: 24px;
   }
 }
+
+/* ============================================
+   SKILL CONTENT (SKILL.md display)
+   ============================================ */
+
+.skill-content-section {
+  margin-top: 32px;
+}
+
+.skill-md-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 24px 32px;
+  overflow-x: auto;
+}
+
+.skill-md-content h1,
+.skill-md-content h2,
+.skill-md-content h3,
+.skill-md-content h4 {
+  color: var(--text-primary);
+  margin-top: 24px;
+  margin-bottom: 12px;
+}
+
+.skill-md-content h1:first-child,
+.skill-md-content h2:first-child {
+  margin-top: 0;
+}
+
+.skill-md-content h1 { font-size: 1.5rem; }
+.skill-md-content h2 { font-size: 1.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 8px; }
+.skill-md-content h3 { font-size: 1.1rem; }
+.skill-md-content h4 { font-size: 1rem; color: var(--text-secondary); }
+
+.skill-md-content p {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  line-height: 1.7;
+}
+
+.skill-md-content ul,
+.skill-md-content ol {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  padding-left: 24px;
+}
+
+.skill-md-content li {
+  margin-bottom: 8px;
+}
+
+.skill-md-content code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--link-color);
+}
+
+.skill-md-content pre {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+
+.skill-md-content pre code {
+  background: none;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.skill-md-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+
+.skill-md-content th,
+.skill-md-content td {
+  border: 1px solid var(--border-light);
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.skill-md-content th {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.skill-md-content td {
+  color: var(--text-secondary);
+}
+
+.skill-md-content blockquote {
+  border-left: 3px solid var(--google-blue);
+  padding-left: 16px;
+  margin: 16px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.skill-md-content hr {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 24px 0;
+}
+
+.skill-md-content a {
+  color: var(--link-color);
+}
+
+.skill-md-content a:hover {
+  text-decoration: underline;
+}
