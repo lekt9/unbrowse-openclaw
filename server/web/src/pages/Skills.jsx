@@ -278,27 +278,27 @@ export default function Skills() {
                   <path d="M8 16h5"/>
                 </svg>
               </div>
-              <span className="ub-chat-title">Claude + Unbrowse</span>
+              <span className="ub-chat-title">Claude</span>
               <span className="ub-chat-status">● Online</span>
             </div>
             <div className="ub-chat-body">
               <div className="ub-chat-msg ub-chat-user">
-                <span className="ub-msg-text">I need to post tweets from my agent. Can you set that up?</span>
+                <span className="ub-msg-text">Book me a table at Noma for 2 people this Friday at 7pm</span>
               </div>
               <div className="ub-chat-msg ub-chat-agent">
-                <span className="ub-msg-text">I'll capture Twitter's API. Opening browser — log in when ready.</span>
-                <span className="ub-msg-tool">unbrowse_capture</span>
+                <span className="ub-msg-text">I don't have access to OpenTable. Let me capture it — I'll open a browser, you log in once.</span>
+                <span className="ub-msg-tool">unbrowse_login url="opentable.com"</span>
+              </div>
+              <div className="ub-chat-msg ub-chat-system">
+                <span className="ub-msg-browser">🌐 Browser opened → Log in to OpenTable</span>
               </div>
               <div className="ub-chat-msg ub-chat-agent">
-                <span className="ub-msg-text">Done. Captured 47 endpoints. Browser closed — I'll use the API directly from now on.</span>
-                <span className="ub-msg-status">✓ twitter-api skill created</span>
-              </div>
-              <div className="ub-chat-msg ub-chat-user">
-                <span className="ub-msg-text">Post "Hello from my AI agent!"</span>
+                <span className="ub-msg-text">Got it. I captured OpenTable's booking API. <strong>Browser closed.</strong> I'll never need it again for OpenTable.</span>
+                <span className="ub-msg-status">✓ opentable skill saved</span>
               </div>
               <div className="ub-chat-msg ub-chat-agent">
-                <span className="ub-msg-text">Posted successfully. No browser needed — direct API call in 47ms.</span>
-                <span className="ub-msg-status">✓ Tweet posted</span>
+                <span className="ub-msg-text">Booked! Noma, Friday 7pm, party of 2. Confirmation #8847.</span>
+                <span className="ub-msg-status">✓ 230ms — no browser</span>
               </div>
             </div>
             <div className="ub-chat-input">
@@ -315,35 +315,44 @@ export default function Skills() {
                 <span />
                 <span />
               </div>
-              <span className="ub-terminal-title">what's happening</span>
+              <span className="ub-terminal-title">under the hood</span>
             </div>
             <div className="ub-terminal-body">
-              <div className="ub-term-line ub-term-comment"># One-time browser capture</div>
+              <div className="ub-term-line ub-term-comment"># First time: browser opens once</div>
               <div className="ub-term-line">
                 <span className="ub-term-prompt">→</span>
-                <span className="ub-term-cmd">unbrowse_capture <span className="ub-term-arg">url="twitter.com"</span></span>
+                <span className="ub-term-cmd">unbrowse_login <span className="ub-term-arg">"opentable.com"</span></span>
               </div>
               <div className="ub-term-line ub-term-output">
-                <span className="ub-term-success">[OK]</span> 47 endpoints captured
-              </div>
-              <div className="ub-term-line ub-term-comment"># No browser from here on</div>
-              <div className="ub-term-line">
-                <span className="ub-term-prompt">→</span>
-                <span className="ub-term-cmd">unbrowse_replay <span className="ub-term-arg">action="post_tweet"</span></span>
+                <span className="ub-term-success">[BROWSER]</span> User logged in
               </div>
               <div className="ub-term-line ub-term-output">
-                <span className="ub-term-success">[OK]</span> POST /2/tweets → 200 <span className="ub-term-dim">(47ms)</span>
+                <span className="ub-term-success">[CAPTURE]</span> 12 API endpoints saved
               </div>
-              <div className="ub-term-line ub-term-comment"># Publish to marketplace</div>
+              <div className="ub-term-line ub-term-output">
+                <span className="ub-term-dim">[BROWSER]</span> Closed. Never needed again.
+              </div>
+              <div className="ub-term-line ub-term-comment"># Every time after: direct API</div>
               <div className="ub-term-line">
                 <span className="ub-term-prompt">→</span>
-                <span className="ub-term-cmd">unbrowse_publish <span className="ub-term-arg">price="2.50"</span></span>
+                <span className="ub-term-cmd">unbrowse_replay <span className="ub-term-arg">"book_table"</span></span>
+              </div>
+              <div className="ub-term-line ub-term-output">
+                <span className="ub-term-success">[API]</span> POST /booking → 200 <span className="ub-term-dim">(230ms)</span>
               </div>
               <div className="ub-term-line ub-term-output ub-term-final">
-                <span className="ub-term-accent">[$$]</span> Earn <span className="ub-term-money">$1.75</span>/download
+                <span className="ub-term-accent">[OK]</span> Confirmation #8847
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Key insight callout */}
+        <div className="ub-demo-insight">
+          <span className="ub-insight-icon">💡</span>
+          <span className="ub-insight-text">
+            <strong>One login. Forever API access.</strong> The browser opens once to capture auth. After that, your agent calls APIs directly — 100x faster, no Puppeteer, no flaky selectors.
+          </span>
         </div>
       </section>
 

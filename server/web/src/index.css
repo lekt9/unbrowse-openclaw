@@ -2929,6 +2929,20 @@ a {
   padding-left: 4px;
 }
 
+.ub-chat-system {
+  align-self: center;
+}
+
+.ub-msg-browser {
+  display: inline-block;
+  padding: 8px 14px;
+  background: rgba(255, 170, 0, 0.1);
+  border: 1px dashed rgba(255, 170, 0, 0.4);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: #ffaa00;
+}
+
 .ub-chat-input {
   display: flex;
   gap: 8px;
@@ -2956,6 +2970,35 @@ a {
   color: var(--text-tertiary);
   font-size: 1rem;
   cursor: not-allowed;
+}
+
+/* Demo Insight Callout */
+.ub-demo-insight {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  max-width: 700px;
+  margin: 32px auto 0;
+  padding: 20px 24px;
+  background: rgba(0, 255, 136, 0.05);
+  border: 1px solid var(--border-accent);
+  border-left: 3px solid var(--neon);
+}
+
+.ub-insight-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.ub-insight-text {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.ub-insight-text strong {
+  color: var(--neon);
+  font-weight: 600;
 }
 
 /* Terminal */
@@ -3873,6 +3916,12 @@ a {
 
   .ub-chat-msg {
     max-width: 90%;
+  }
+
+  .ub-demo-insight {
+    margin: 24px 16px 0;
+    padding: 16px;
+    font-size: 0.9rem;
   }
 
   .ub-terminal {
