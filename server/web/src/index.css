@@ -4582,6 +4582,143 @@ a {
   color: var(--text-muted);
 }
 
+/* Featured Section */
+.ub-featured-section {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 60px 24px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ub-section-header {
+  margin-bottom: 32px;
+}
+
+.ub-section-header h2 {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.ub-section-header p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.ub-featured-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.ub-featured-card {
+  background: linear-gradient(135deg, rgba(0, 255, 136, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%);
+  border: 1px solid var(--border-accent);
+  padding: 24px;
+  transition: all 0.2s;
+}
+
+.ub-featured-card:hover {
+  border-color: var(--neon);
+  transform: translateY(-2px);
+}
+
+.ub-featured-badge {
+  margin-bottom: 12px;
+}
+
+.ub-featured-card h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.ub-featured-card p {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ub-featured-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+/* Trending Section */
+.ub-trending-section {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 60px 24px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ub-trending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.ub-trending-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  padding: 20px;
+  transition: all 0.2s;
+}
+
+.ub-trending-card:hover {
+  border-color: var(--border-accent);
+}
+
+.ub-trending-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ub-velocity {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--neon);
+  background: rgba(0, 255, 136, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.ub-trending-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.ub-trending-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ub-price {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.ub-price.free {
+  color: var(--neon);
+}
+
 /* Marketplace Header Redesign */
 .ub-marketplace-title-row {
   display: flex;

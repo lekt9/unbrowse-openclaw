@@ -67,17 +67,55 @@ function CodeRain() {
 
 export default function Skills() {
   const [skills, setSkills] = useState([]);
+  const [featuredSkills, setFeaturedSkills] = useState([]);
+  const [trendingSkills, setTrendingSkills] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [stats, setStats] = useState({ total: 0, services: 0, downloads: 0 });
   const [activeFilter, setActiveFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [showMarketplace, setShowMarketplace] = useState(false);
+  const [badgeFilter, setBadgeFilter] = useState('all');
   const marketplaceRef = useRef(null);
 
   useEffect(() => {
-    loadMarketplaceSkills();
+    loadAllData();
   }, []);
+
+  const loadAllData = async () => {
+    setLoading(true);
+    try {
+      // Fetch all data in parallel
+      const [skillsRes, featuredRes, trendingRes] = await Promise.all([
+        fetch(`${API_BASE}/marketplace/skills?limit=100`),
+        fetch(`${API_BASE}/marketplace/featured?limit=20`).catch(() => null),
+        fetch(`${API_BASE}/marketplace/trending?period=7d&limit=10`).catch(() => null),
+      ]);
+
+      if (skillsRes.ok) {
+        const data = await skillsRes.json();
+        const skillsList = data.skills || [];
+        setSkills(skillsList);
+
+        const services = new Set(skillsList.map(s => s.serviceName).filter(Boolean)).size;
+        const totalDownloads = skillsList.reduce((sum, s) => sum + (s.downloadCount || 0), 0);
+        setStats({ total: skillsList.length, services, downloads: totalDownloads });
+      }
+
+      if (featuredRes?.ok) {
+        const data = await featuredRes.json();
+        setFeaturedSkills(data.skills || []);
+      }
+
+      if (trendingRes?.ok) {
+        const data = await trendingRes.json();
+        setTrendingSkills(data.skills || []);
+      }
+    } catch (err) {
+      console.error('Failed to load data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadMarketplaceSkills = async (query = '') => {
     setLoading(true);
@@ -141,10 +179,18 @@ export default function Skills() {
     if (categoryFilter === 'api-package') return skill.category === 'api-package' || !skill.category;
     if (categoryFilter === 'workflow') return skill.category === 'workflow';
     return true;
+  }).filter(skill => {
+    if (badgeFilter === 'all') return true;
+    return skill.badge === badgeFilter;
   });
 
-  // Sort by downloads
+  // Sort by downloads, but put badged skills first
   const sortedSkills = [...filteredSkills].sort((a, b) => {
+    // Official/highlighted badges first
+    const badgePriority = { official: 0, highlighted: 1, verified: 2 };
+    const aPriority = a.badge ? (badgePriority[a.badge] ?? 3) : 4;
+    const bPriority = b.badge ? (badgePriority[b.badge] ?? 3) : 4;
+    if (aPriority !== bPriority) return aPriority - bPriority;
     return (b.downloadCount || 0) - (a.downloadCount || 0);
   });
 
@@ -319,6 +365,75 @@ export default function Skills() {
         </div>
       </section>
 
+      {/* Featured Skills (badged) */}
+      {featuredSkills.length > 0 && !search && (
+        <section className="ub-featured-section">
+          <div className="ub-section-header">
+            <h2>⭐ Featured Skills</h2>
+            <p>Official and verified skills from the community</p>
+          </div>
+          <div className="ub-featured-grid">
+            {featuredSkills.slice(0, 4).map((skill) => {
+              const price = parseFloat(skill.priceUsdc || '0');
+              const isFree = price === 0;
+              return (
+                <Link key={skill.skillId} to={`/skill/${skill.skillId}`} className="ub-featured-card">
+                  <div className="ub-featured-badge">
+                    <BadgeChip badge={skill.badge} />
+                  </div>
+                  <h3>{skill.name}</h3>
+                  <p>{skill.description || `API skill for ${skill.serviceName || skill.domain}`}</p>
+                  <div className="ub-featured-footer">
+                    <span className="ub-service-name">{skill.serviceName || skill.domain}</span>
+                    <span className={`ub-price ${isFree ? 'free' : ''}`}>
+                      {isFree ? 'FREE' : `$${price.toFixed(2)}`}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Trending Skills */}
+      {trendingSkills.length > 0 && !search && (
+        <section className="ub-trending-section">
+          <div className="ub-section-header">
+            <h2>🔥 Trending This Week</h2>
+            <p>Skills with the highest download velocity</p>
+          </div>
+          <div className="ub-trending-grid">
+            {trendingSkills.slice(0, 6).map((skill) => {
+              const price = parseFloat(skill.priceUsdc || '0');
+              const isFree = price === 0;
+              return (
+                <Link key={skill.skillId} to={`/skill/${skill.skillId}`} className="ub-trending-card">
+                  <div className="ub-trending-header">
+                    <span className="ub-service-name">{skill.serviceName || skill.domain}</span>
+                    {skill.velocity > 0 && (
+                      <span className="ub-velocity">↑{Math.round(skill.velocity * 100)}%</span>
+                    )}
+                  </div>
+                  <h3>{skill.name}</h3>
+                  <div className="ub-trending-footer">
+                    <span className="ub-downloads">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                      </svg>
+                      {(skill.downloadCount || 0).toLocaleString()}
+                    </span>
+                    <span className={`ub-price ${isFree ? 'free' : ''}`}>
+                      {isFree ? 'FREE' : `$${price.toFixed(2)}`}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Marketplace - Full Width */}
       <section className="ub-marketplace" ref={marketplaceRef}>
         <div className="ub-marketplace-header">
@@ -355,6 +470,20 @@ export default function Skills() {
                     onClick={() => setActiveFilter(f)}
                   >
                     {f === 'all' ? 'All' : f === 'free' ? 'Free' : 'Paid'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ub-filter-group">
+              <span className="ub-filter-label">Badge:</span>
+              <div className="ub-filter-tabs">
+                {['all', 'official', 'verified', 'highlighted'].map(f => (
+                  <button
+                    key={f}
+                    className={`ub-filter-tab ${badgeFilter === f ? 'active' : ''}`}
+                    onClick={() => setBadgeFilter(f)}
+                  >
+                    {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
                   </button>
                 ))}
               </div>
