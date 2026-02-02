@@ -3,6 +3,37 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 const API_BASE = 'https://index.unbrowse.ai';
 
+// Badge display component
+function BadgeChip({ badge }) {
+  if (!badge) return null;
+
+  const badgeStyles = {
+    official: { bg: 'rgba(16, 185, 129, 0.1)', color: '#10b981', icon: '✓', label: 'Official' },
+    highlighted: { bg: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', icon: '⭐', label: 'Featured' },
+    deprecated: { bg: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', icon: '⚠', label: 'Deprecated' },
+    verified: { bg: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', icon: '✓', label: 'Verified' },
+  };
+
+  const style = badgeStyles[badge] || { bg: '#f3f4f6', color: '#6b7280', icon: '•', label: badge };
+
+  return (
+    <span
+      className="ub-badge-chip"
+      style={{
+        background: style.bg,
+        color: style.color,
+        padding: '2px 8px',
+        borderRadius: '4px',
+        fontSize: '11px',
+        fontWeight: 600,
+        marginLeft: '6px',
+      }}
+    >
+      {style.icon} {style.label}
+    </span>
+  );
+}
+
 // Chat-style demo showing the workflow (based on real OpenClaw logs)
 function ChatDemo() {
   const [step, setStep] = useState(0);
@@ -67,6 +98,7 @@ export default function Skills() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [stats, setStats] = useState({ total: 0, free: 0, downloads: 0 });
   const [popularSkills, setPopularSkills] = useState([]);
+  const [trendingSkills, setTrendingSkills] = useState([]);
   const [allSkills, setAllSkills] = useState([]);
   const [services, setServices] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -83,9 +115,14 @@ export default function Skills() {
 
   const loadStats = async () => {
     try {
-      const res = await fetch(`${API_BASE}/marketplace/skills?limit=100`);
-      if (res.ok) {
-        const data = await res.json();
+      // Fetch skills and trending in parallel
+      const [skillsRes, trendingRes] = await Promise.all([
+        fetch(`${API_BASE}/marketplace/skills?limit=100`),
+        fetch(`${API_BASE}/marketplace/trending?limit=8`).catch(() => null),
+      ]);
+
+      if (skillsRes.ok) {
+        const data = await skillsRes.json();
         const skillsList = data.skills || [];
         setAllSkills(skillsList);
 
@@ -113,6 +150,12 @@ export default function Skills() {
           .sort((a, b) => b.count - a.count)
           .slice(0, 8);
         setServices(topServices);
+      }
+
+      // Set trending skills if available
+      if (trendingRes?.ok) {
+        const trendingData = await trendingRes.json();
+        setTrendingSkills(trendingData.skills || []);
       }
     } catch (err) {
       console.error('Failed to load stats:', err);
@@ -356,6 +399,37 @@ export default function Skills() {
             </div>
           </div>
 
+          {/* Trending Skills */}
+          {trendingSkills.length > 0 && (
+            <div className="ub-trending">
+              <h3 className="ub-popular-title">Trending Now</h3>
+              <div className="ub-popular-grid">
+                {trendingSkills.map(skill => {
+                  const isFree = parseFloat(skill.priceUsdc || '0') === 0;
+                  return (
+                    <Link
+                      key={skill.skillId}
+                      to={`/skill/${skill.skillId}`}
+                      className="ub-popular-card ub-trending-card"
+                    >
+                      <div className="ub-popular-name">
+                        {skill.name}
+                        <BadgeChip badge={skill.badge} />
+                        {isFree && !skill.badge && <span className="ub-popular-free">FREE</span>}
+                      </div>
+                      <div className="ub-popular-desc">
+                        {skill.serviceName || skill.domain || 'API Skill'}
+                        {skill.velocity > 0 && (
+                          <span className="ub-trending-velocity">+{Math.round(skill.velocity * 100)}%</span>
+                        )}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Popular Skills */}
           {popularSkills.length > 0 && (
             <div className="ub-popular">
@@ -371,7 +445,8 @@ export default function Skills() {
                     >
                       <div className="ub-popular-name">
                         {skill.name}
-                        {isFree && <span className="ub-popular-free">FREE</span>}
+                        <BadgeChip badge={skill.badge} />
+                        {isFree && !skill.badge && <span className="ub-popular-free">FREE</span>}
                       </div>
                       <div className="ub-popular-desc">
                         {skill.serviceName || skill.domain || 'API Skill'}
@@ -514,7 +589,8 @@ export default function Skills() {
                     </div>
                     <Link to={`/skill/${skill.skillId}`} className="ub-result-title">
                       {skill.name}
-                      {isFree && <span className="ub-result-free">FREE</span>}
+                      <BadgeChip badge={skill.badge} />
+                      {isFree && !skill.badge && <span className="ub-result-free">FREE</span>}
                     </Link>
                     <p className="ub-result-desc">
                       {skill.description || `${skill.name} API skill for OpenClaw.`}
