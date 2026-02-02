@@ -4,22 +4,57 @@ import ReactMarkdown from 'react-markdown';
 
 const API_BASE = 'https://index.unbrowse.ai';
 
+// Badge chip component
+function BadgeChip({ badge }) {
+  if (!badge) return null;
+  const styles = {
+    official: { bg: 'rgba(0, 255, 136, 0.15)', color: '#00ff88', icon: '✓', label: 'Official' },
+    highlighted: { bg: 'rgba(255, 200, 0, 0.15)', color: '#ffc800', icon: '⭐', label: 'Featured' },
+    deprecated: { bg: 'rgba(255, 68, 68, 0.15)', color: '#ff4444', icon: '⚠', label: 'Deprecated' },
+    verified: { bg: 'rgba(0, 200, 255, 0.15)', color: '#00c8ff', icon: '✓', label: 'Verified' },
+  };
+  const s = styles[badge] || { bg: 'rgba(255,255,255,0.1)', color: '#888', icon: '•', label: badge };
+  return (
+    <span className="detail-badge" style={{ background: s.bg, color: s.color }}>
+      {s.icon} {s.label}
+    </span>
+  );
+}
+
 export default function SkillDetail() {
   const { id } = useParams();
   const [skill, setSkill] = useState(null);
+  const [versions, setVersions] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [copiedStep, setCopiedStep] = useState(null);
 
   useEffect(() => {
-    loadSkill();
+    loadAllData();
   }, [id]);
 
-  const loadSkill = async () => {
+  const loadAllData = async () => {
     try {
-      const res = await fetch(`${API_BASE}/marketplace/skills/${id}`);
-      if (res.ok) {
-        const data = await res.json();
+      // Fetch skill, versions, and stats in parallel
+      const [skillRes, versionsRes, statsRes] = await Promise.all([
+        fetch(`${API_BASE}/marketplace/skills/${id}`),
+        fetch(`${API_BASE}/marketplace/skills/${id}/versions`).catch(() => null),
+        fetch(`${API_BASE}/marketplace/skills/${id}/stats?period=7d`).catch(() => null),
+      ]);
+
+      if (skillRes.ok) {
+        const data = await skillRes.json();
         setSkill(data.skill);
+      }
+
+      if (versionsRes?.ok) {
+        const data = await versionsRes.json();
+        setVersions(data.versions || []);
+      }
+
+      if (statsRes?.ok) {
+        const data = await statsRes.json();
+        setStats(data);
       }
     } catch (err) {
       console.error('Failed to load skill:', err);
@@ -84,6 +119,7 @@ export default function SkillDetail() {
             {skill.category && (
               <span className="detail-category">{skill.category}</span>
             )}
+            <BadgeChip badge={skill.badge} />
             <h1 className="detail-title">{skill.name}</h1>
           </div>
           <p className="detail-description">
@@ -116,6 +152,32 @@ export default function SkillDetail() {
           <div className="meta-label">Downloads</div>
           <div className="meta-value">{(skill.downloadCount || 0).toLocaleString()}</div>
         </div>
+        {skill.endpointCount > 0 && (
+          <div className="meta-card">
+            <div className="meta-label">Endpoints</div>
+            <div className="meta-value">{skill.endpointCount}</div>
+          </div>
+        )}
+        {versions.length > 0 && (
+          <div className="meta-card">
+            <div className="meta-label">Versions</div>
+            <div className="meta-value">{versions.length}</div>
+          </div>
+        )}
+        {stats?.executions && (
+          <div className="meta-card">
+            <div className="meta-label">Success Rate</div>
+            <div className="meta-value" style={{ color: stats.executions.successRate >= 90 ? '#00ff88' : stats.executions.successRate >= 70 ? '#ffaa00' : '#ff4444' }}>
+              {stats.executions.successRate?.toFixed(0) || 0}%
+            </div>
+          </div>
+        )}
+        {stats?.executions?.avgExecutionTimeMs && (
+          <div className="meta-card">
+            <div className="meta-label">Avg Response</div>
+            <div className="meta-value">{Math.round(stats.executions.avgExecutionTimeMs)}ms</div>
+          </div>
+        )}
       </div>
 
       {/* Free Skill Section or Paywall */}
@@ -348,6 +410,28 @@ export default function SkillDetail() {
           )}
         </div>
       </section>
+
+      {/* Version History */}
+      {versions.length > 0 && (
+        <section className="detail-section">
+          <h2>Version History</h2>
+          <div className="version-list">
+            {versions.slice(0, 5).map((v, i) => (
+              <div key={v.versionHash || i} className="version-item">
+                <div className="version-header">
+                  <span className="version-number">{v.versionNumber || `v${versions.length - i}`}</span>
+                  <span className="version-date">
+                    {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'Unknown'}
+                  </span>
+                  {i === 0 && <span className="version-latest">Latest</span>}
+                </div>
+                {v.changelog && <p className="version-changelog">{v.changelog}</p>}
+                <code className="version-hash">{v.versionHash?.slice(0, 12)}...</code>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Creator */}
       {skill.creatorWallet && (

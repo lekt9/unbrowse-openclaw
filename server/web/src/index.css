@@ -597,6 +597,77 @@ a {
   color: white;
 }
 
+.detail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Version History */
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.version-item {
+  padding: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+}
+
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.version-number {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.version-date {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.version-latest {
+  padding: 2px 8px;
+  background: rgba(0, 255, 136, 0.15);
+  color: var(--neon);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.version-changelog {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.version-hash {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
 .skill-name {
   font-size: 1.125rem;
   font-weight: 600;
