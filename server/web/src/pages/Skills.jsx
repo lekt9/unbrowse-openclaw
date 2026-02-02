@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 
 const API_BASE = 'https://index.unbrowse.ai';
 
@@ -8,148 +8,101 @@ function BadgeChip({ badge }) {
   if (!badge) return null;
 
   const badgeStyles = {
-    official: { bg: 'rgba(16, 185, 129, 0.1)', color: '#10b981', icon: '✓', label: 'Official' },
-    highlighted: { bg: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', icon: '⭐', label: 'Featured' },
-    deprecated: { bg: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', icon: '⚠', label: 'Deprecated' },
-    verified: { bg: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', icon: '✓', label: 'Verified' },
+    official: { bg: 'rgba(0, 255, 136, 0.15)', color: '#00ff88', icon: '✓', label: 'Official' },
+    highlighted: { bg: 'rgba(255, 200, 0, 0.15)', color: '#ffc800', icon: '⭐', label: 'Featured' },
+    deprecated: { bg: 'rgba(255, 68, 68, 0.15)', color: '#ff4444', icon: '⚠', label: 'Deprecated' },
+    verified: { bg: 'rgba(0, 200, 255, 0.15)', color: '#00c8ff', icon: '✓', label: 'Verified' },
   };
 
-  const style = badgeStyles[badge] || { bg: '#f3f4f6', color: '#6b7280', icon: '•', label: badge };
+  const style = badgeStyles[badge] || { bg: 'rgba(255,255,255,0.1)', color: '#888', icon: '•', label: badge };
 
   return (
-    <span
-      className="ub-badge-chip"
-      style={{
-        background: style.bg,
-        color: style.color,
-        padding: '2px 8px',
-        borderRadius: '4px',
-        fontSize: '11px',
-        fontWeight: 600,
-        marginLeft: '6px',
-      }}
-    >
+    <span className="ub-badge-chip" style={{ background: style.bg, color: style.color }}>
       {style.icon} {style.label}
     </span>
   );
 }
 
-// Chat-style demo showing the workflow (based on real OpenClaw logs)
-function ChatDemo() {
-  const [step, setStep] = useState(0);
-  const messages = [
-    { type: 'user', text: 'generate a song on suno' },
-    { type: 'assistant', text: 'browsing suno.com now...' },
-    { type: 'status', text: 'Unbrowse: Learning API from browser traffic' },
-    { type: 'assistant', text: 'Song created: "Midnight Dreams"\n\nSkill learned: suno-generate' },
-    { type: 'user', text: 'make another one' },
-    { type: 'assistant', text: 'Using API directly... 50ms\n\nSong queued: "Ocean Waves"' },
-    { type: 'user', text: 'publish the skill for $1' },
-    { type: 'assistant', text: 'Published to marketplace. You earn $0.70 per download.' },
-  ];
+// Animated code rain effect
+function CodeRain() {
+  const canvasRef = useRef(null);
 
   useEffect(() => {
-    if (step < messages.length) {
-      const delay = messages[step]?.type === 'user' ? 1200 : 900;
-      const timer = setTimeout(() => setStep(s => s + 1), delay);
-      return () => clearTimeout(timer);
-    }
-    const resetTimer = setTimeout(() => setStep(0), 4000);
-    return () => clearTimeout(resetTimer);
-  }, [step]);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-  return (
-    <div className="ub-chat">
-      <div className="ub-chat-header">
-        <div className="ub-chat-avatar">🤖</div>
-        <div className="ub-chat-info">
-          <span className="ub-chat-name">OpenClaw</span>
-          <span className="ub-chat-status">with unbrowse</span>
-        </div>
-      </div>
-      <div className="ub-chat-body">
-        {messages.slice(0, step).map((msg, i) => (
-          <div key={i} className={`ub-chat-msg ub-chat-${msg.type}`}>
-            {msg.type === 'status' ? (
-              <div className="ub-chat-status-badge">{msg.text}</div>
-            ) : (
-              <div className="ub-chat-bubble">{msg.text}</div>
-            )}
-          </div>
-        ))}
-        {step < messages.length && step > 0 && (
-          <div className="ub-chat-msg ub-chat-assistant">
-            <div className="ub-chat-typing">
-              <span></span><span></span><span></span>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    const ctx = canvas.getContext('2d');
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    const chars = 'GETPOSTPUTDELETEPATCH{}[]":,01'.split('');
+    const fontSize = 14;
+    const columns = canvas.width / fontSize;
+    const drops = Array(Math.floor(columns)).fill(1);
+
+    const draw = () => {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = 'rgba(0, 255, 136, 0.35)';
+      ctx.font = `${fontSize}px monospace`;
+
+      for (let i = 0; i < drops.length; i++) {
+        const char = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+
+        if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+          drops[i] = 0;
+        }
+        drops[i]++;
+      }
+    };
+
+    const interval = setInterval(draw, 50);
+    return () => clearInterval(interval);
+  }, []);
+
+  return <canvas ref={canvasRef} className="code-rain" />;
 }
 
 export default function Skills() {
-  const [searchParams, setSearchParams] = useSearchParams();
   const [skills, setSkills] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState(searchParams.get('q') || '');
-  const [hasSearched, setHasSearched] = useState(!!searchParams.get('q'));
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [stats, setStats] = useState({ total: 0, free: 0, downloads: 0 });
-  const [popularSkills, setPopularSkills] = useState([]);
-  const [trendingSkills, setTrendingSkills] = useState([]);
-  const [allSkills, setAllSkills] = useState([]);
-  const [services, setServices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [stats, setStats] = useState({ total: 0, services: 0, downloads: 0 });
+  const [activeFilter, setActiveFilter] = useState('free');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const searchInputRef = useRef(null);
+  const [trendingSkills, setTrendingSkills] = useState([]);
 
   useEffect(() => {
-    // Load initial stats and popular skills
-    loadStats();
-    // If there's a query param, search immediately
-    if (searchParams.get('q')) {
-      performSearch(searchParams.get('q'));
-    }
-  }, []);
+    loadMarketplaceSkills();
+  }, [categoryFilter]);
 
-  const loadStats = async () => {
+  const loadMarketplaceSkills = async (query = '') => {
+    setLoading(true);
     try {
+      let url = `${API_BASE}/marketplace/skills?limit=100`;
+      if (query.trim()) {
+        url += `&q=${encodeURIComponent(query)}`;
+      }
+      if (categoryFilter !== 'all') {
+        url += `&category=${encodeURIComponent(categoryFilter)}`;
+      }
+
       // Fetch skills and trending in parallel
       const [skillsRes, trendingRes] = await Promise.all([
-        fetch(`${API_BASE}/marketplace/skills?limit=100`),
-        fetch(`${API_BASE}/marketplace/trending?limit=8`).catch(() => null),
+        fetch(url),
+        fetch(`${API_BASE}/marketplace/trending?limit=6`).catch(() => null),
       ]);
 
       if (skillsRes.ok) {
         const data = await skillsRes.json();
         const skillsList = data.skills || [];
-        setAllSkills(skillsList);
+        setSkills(skillsList);
 
-        const freeCount = skillsList.filter(s => parseFloat(s.priceUsdc || '0') === 0).length;
+        const services = new Set(skillsList.map(s => s.serviceName).filter(Boolean)).size;
         const totalDownloads = skillsList.reduce((sum, s) => sum + (s.downloadCount || 0), 0);
-        setStats({ total: skillsList.length, free: freeCount, downloads: totalDownloads });
-
-        // Get top 8 skills by downloads for popular section
-        const popular = [...skillsList]
-          .sort((a, b) => (b.downloadCount || 0) - (a.downloadCount || 0))
-          .slice(0, 8);
-        setPopularSkills(popular);
-
-        // Extract unique services for browsing
-        const serviceMap = new Map();
-        skillsList.forEach(s => {
-          const name = s.serviceName || s.domain;
-          if (name && !serviceMap.has(name)) {
-            serviceMap.set(name, { name, count: 1 });
-          } else if (name) {
-            serviceMap.get(name).count++;
-          }
-        });
-        const topServices = [...serviceMap.values()]
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 8);
-        setServices(topServices);
+        setStats({ total: skillsList.length, services, downloads: totalDownloads });
       }
 
       // Set trending skills if available
@@ -158,472 +111,495 @@ export default function Skills() {
         setTrendingSkills(trendingData.skills || []);
       }
     } catch (err) {
-      console.error('Failed to load stats:', err);
-    }
-  };
-
-  const performSearch = async (searchQuery) => {
-    setLoading(true);
-    setHasSearched(true);
-    try {
-      let url = `${API_BASE}/marketplace/skills?limit=100`;
-      if (searchQuery.trim()) {
-        url += `&q=${encodeURIComponent(searchQuery)}`;
-      }
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setSkills(data.skills || []);
-      }
-    } catch (err) {
-      console.error('Search failed:', err);
+      console.error('Failed to load skills:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = (e) => {
+  const handleSearch = async (e) => {
     e.preventDefault();
-    if (query.trim()) {
-      setSearchParams({ q: query });
-      performSearch(query);
-    }
-  };
-
-  const handleRandomSkill = async () => {
-    // If we already have popular skills loaded, use those
-    if (popularSkills.length > 0) {
-      const randomSkill = popularSkills[Math.floor(Math.random() * popularSkills.length)];
-      window.location.href = `/skill/${randomSkill.skillId}`;
-      return;
-    }
-
-    // Otherwise fetch
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/marketplace/skills?limit=100`);
-      if (res.ok) {
-        const data = await res.json();
-        const skillsList = data.skills || [];
-        if (skillsList.length > 0) {
-          const randomSkill = skillsList[Math.floor(Math.random() * skillsList.length)];
-          window.location.href = `/skill/${randomSkill.skillId}`;
-        }
-      }
-    } catch (err) {
-      console.error('Random skill failed:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const clearSearch = () => {
-    setQuery('');
-    setHasSearched(false);
-    setSkills([]);
-    setSearchParams({});
-    searchInputRef.current?.focus();
-  };
-
-  const browseAll = () => {
-    setSkills(allSkills);
-    setHasSearched(true);
-    setQuery('');
-    setSearchParams({});
-  };
-
-  const browseService = (serviceName) => {
-    const filtered = allSkills.filter(s =>
-      s.serviceName === serviceName || s.domain === serviceName
-    );
-    setSkills(filtered);
-    setHasSearched(true);
-    setQuery(serviceName);
-    setSearchParams({ q: serviceName });
+    loadMarketplaceSkills(search);
   };
 
   const filteredSkills = skills.filter(skill => {
-    const priceOk = activeFilter === 'all' ? true :
-      activeFilter === 'free' ? parseFloat(skill.priceUsdc || '0') === 0 :
-      parseFloat(skill.priceUsdc || '0') > 0;
-
-    const categoryOk = categoryFilter === 'all' ? true :
-      categoryFilter === 'api' ? skill.category !== 'workflow' :
-      skill.category === 'workflow';
-
-    return priceOk && categoryOk;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      skill.name?.toLowerCase().includes(q) ||
+      skill.description?.toLowerCase().includes(q) ||
+      skill.domain?.toLowerCase().includes(q) ||
+      skill.serviceName?.toLowerCase().includes(q) ||
+      skill.category?.toLowerCase().includes(q)
+    );
+  }).filter(skill => {
+    if (activeFilter === 'all') return true;
+    if (activeFilter === 'free') return parseFloat(skill.priceUsdc || '0') === 0;
+    if (activeFilter === 'paid') return parseFloat(skill.priceUsdc || '0') > 0;
+    return true;
+  }).filter(skill => {
+    if (categoryFilter === 'all') return true;
+    if (categoryFilter === 'api-package') return skill.category === 'api-package' || !skill.category;
+    if (categoryFilter === 'workflow') return skill.category === 'workflow';
+    return true;
   });
 
-  // Homepage view (Google-style)
-  if (!hasSearched) {
-    return (
-      <div className="ub-home">
-        {/* Top bar */}
-        <header className="ub-home-header">
-          <nav className="ub-home-nav">
-            <Link to="/docs" className="ub-home-link">Docs</Link>
-            <a href="https://github.com/lekt9/unbrowse-openclaw" target="_blank" rel="noopener" className="ub-home-link">GitHub</a>
-          </nav>
-        </header>
+  // Sort: free skills first, then by downloads
+  const sortedSkills = [...filteredSkills].sort((a, b) => {
+    const aFree = parseFloat(a.priceUsdc || '0') === 0;
+    const bFree = parseFloat(b.priceUsdc || '0') === 0;
+    if (aFree !== bFree) return aFree ? -1 : 1;
+    return (b.downloadCount || 0) - (a.downloadCount || 0);
+  });
 
-        {/* Centered content */}
-        <main className="ub-home-main">
-          {/* Logo */}
-          <h1 className="ub-logo">
-            <span className="ub-logo-u">u</span>
-            <span className="ub-logo-n">n</span>
-            <span className="ub-logo-b">b</span>
-            <span className="ub-logo-r">r</span>
-            <span className="ub-logo-o">o</span>
-            <span className="ub-logo-w">w</span>
-            <span className="ub-logo-s">s</span>
-            <span className="ub-logo-e">e</span>
+  // Get free skills for featured section
+  const freeSkills = skills
+    .filter(s => parseFloat(s.priceUsdc || '0') === 0)
+    .sort((a, b) => (b.downloadCount || 0) - (a.downloadCount || 0))
+    .slice(0, 6);
+
+  return (
+    <div className="ub-page">
+      {/* Hero - The Hook */}
+      <section className="ub-hero">
+        <div className="ub-hero-bg">
+          <div className="ub-grid-overlay" />
+          <CodeRain />
+          <div className="ub-scanlines" />
+        </div>
+
+        <div className="ub-hero-content">
+          <div className="ub-hero-badge">
+            <span className="ub-pulse" />
+            <span>OPEN SOURCE API REVERSE ENGINEERING FOR OPENCLAW</span>
+          </div>
+
+          <h1 className="ub-headline">
+            <span className="ub-headline-top">INTERCEPT.</span>
+            <span className="ub-headline-main">
+              <span className="ub-glitch" data-text="EXTRACT.">EXTRACT.</span>
+            </span>
+            <span className="ub-headline-accent">MONETIZE.</span>
           </h1>
 
-          {/* Tagline */}
-          <p className="ub-tagline">One agent browses. All agents get the API.</p>
+          <p className="ub-tagline">
+            Capture APIs. Record cross-site workflows. Share what works.
+            <strong> Earn USDC on every successful execution.</strong>
+          </p>
 
-          {/* Search bar */}
-          <form onSubmit={handleSearch} className="ub-search-box">
-            <div className="ub-search-wrapper">
+          {/* Install Command */}
+          <div className="ub-install-cmd">
+            <code>openclaw plugins install @getfoundry/unbrowse-openclaw</code>
+            <button
+              className="ub-copy-cmd"
+              onClick={() => {
+                navigator.clipboard.writeText('openclaw plugins install @getfoundry/unbrowse-openclaw');
+                const btn = document.querySelector('.ub-copy-cmd');
+                btn.classList.add('copied');
+                setTimeout(() => btn.classList.remove('copied'), 2000);
+              }}
+              title="Copy to clipboard"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="ub-hero-actions">
+            <a
+              href="https://github.com/lekt9/unbrowse-openclaw"
+              target="_blank"
+              rel="noopener"
+              className="ub-btn ub-btn-primary"
+            >
+              <span className="ub-btn-glow" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+              </svg>
+              VIEW ON GITHUB
+            </a>
+            <Link to="/docs" className="ub-btn ub-btn-ghost">
+              READ THE DOCS
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </Link>
+          </div>
+        </div>
+
+        {/* Terminal Demo */}
+        <div className="ub-terminal">
+          <div className="ub-terminal-header">
+            <div className="ub-terminal-dots">
+              <span />
+              <span />
+              <span />
+            </div>
+            <span className="ub-terminal-title">unbrowse — zsh</span>
+          </div>
+          <div className="ub-terminal-body">
+            <div className="ub-term-line">
+              <span className="ub-term-prompt">~</span>
+              <span className="ub-term-cmd">unbrowse_capture <span className="ub-term-arg">url="api.twitter.com"</span></span>
+            </div>
+            <div className="ub-term-line ub-term-output">
+              <span className="ub-term-success">[OK]</span> Intercepted 47 API endpoints
+            </div>
+            <div className="ub-term-line ub-term-output">
+              <span className="ub-term-success">[OK]</span> Generated skill: <span className="ub-term-highlight">twitter-timeline</span>
+            </div>
+            <div className="ub-term-line ub-term-output">
+              <span className="ub-term-success">[OK]</span> Generated skill: <span className="ub-term-highlight">twitter-post-tweet</span>
+            </div>
+            <div className="ub-term-line">
+              <span className="ub-term-prompt">~</span>
+              <span className="ub-term-cmd">unbrowse_publish <span className="ub-term-arg">name="twitter-timeline" price="2.50"</span></span>
+            </div>
+            <div className="ub-term-line ub-term-output ub-term-final">
+              <span className="ub-term-accent">[$$]</span> Published. Earning <span className="ub-term-money">$0.83</span>/download
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Value Props */}
+      <section className="ub-value-section">
+        <div className="ub-value-grid">
+          <div className="ub-value-card">
+            <div className="ub-value-num">01</div>
+            <div className="ub-value-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+              </svg>
+            </div>
+            <h3>CAPTURE</h3>
+            <p>Browse any website. We intercept all API traffic — endpoints, auth headers, payloads. Everything.</p>
+          </div>
+
+          <div className="ub-value-card">
+            <div className="ub-value-num">02</div>
+            <div className="ub-value-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+              </svg>
+            </div>
+            <h3>GENERATE</h3>
+            <p>AI transforms raw traffic into production-ready skills with schemas, auth handling, and docs.</p>
+          </div>
+
+          <div className="ub-value-card ub-value-featured">
+            <div className="ub-value-num">03</div>
+            <div className="ub-value-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+              </svg>
+            </div>
+            <h3>MONETIZE</h3>
+            <p>Publish to marketplace. Earn 70% of every download in USDC. Your skills work while you sleep.</p>
+            <div className="ub-value-stat">
+              <span className="ub-stat-value">{stats.downloads.toLocaleString()}</span>
+              <span className="ub-stat-label">TOTAL DOWNLOADS</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Stats Strip */}
+      <section className="ub-stats-strip">
+        <div className="ub-stat-block">
+          <div className="ub-stat-num">{stats.total}</div>
+          <div className="ub-stat-text">SKILLS<br/>INDEXED</div>
+        </div>
+        <div className="ub-stat-divider" />
+        <div className="ub-stat-block">
+          <div className="ub-stat-num">{stats.services}</div>
+          <div className="ub-stat-text">APIS<br/>CAPTURED</div>
+        </div>
+        <div className="ub-stat-divider" />
+        <div className="ub-stat-block">
+          <div className="ub-stat-num">70%</div>
+          <div className="ub-stat-text">CREATOR<br/>REVENUE</div>
+        </div>
+        <div className="ub-stat-divider" />
+        <div className="ub-stat-block">
+          <div className="ub-stat-num">USDC</div>
+          <div className="ub-stat-text">INSTANT<br/>PAYOUTS</div>
+        </div>
+      </section>
+
+      {/* Trending Skills */}
+      {trendingSkills.length > 0 && (
+        <section className="ub-trending-section">
+          <div className="ub-section-header">
+            <div className="ub-section-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+              </svg>
+              TRENDING NOW
+            </div>
+            <h2>Hot Skills</h2>
+            <p>Skills gaining momentum in the last 24 hours</p>
+          </div>
+          <div className="ub-trending-grid">
+            {trendingSkills.map((skill) => {
+              const isFree = parseFloat(skill.priceUsdc || '0') === 0;
+              return (
+                <Link
+                  key={skill.skillId}
+                  to={`/skill/${skill.skillId}`}
+                  className="ub-trending-card"
+                >
+                  <div className="ub-trending-header">
+                    <span className={`ub-tag ${skill.category === 'workflow' ? 'ub-tag-workflow' : 'ub-tag-api'}`}>
+                      {skill.category === 'workflow' ? 'WORKFLOW' : 'API'}
+                    </span>
+                    <BadgeChip badge={skill.badge} />
+                    {skill.velocity > 0 && (
+                      <span className="ub-velocity">+{Math.round(skill.velocity * 100)}%</span>
+                    )}
+                  </div>
+                  <h3>{skill.name}</h3>
+                  <p>{skill.serviceName || skill.domain || 'API Skill'}</p>
+                  <div className="ub-trending-footer">
+                    <span className={`ub-price ${isFree ? 'free' : ''}`}>
+                      {isFree ? 'FREE' : `$${parseFloat(skill.priceUsdc).toFixed(2)}`}
+                    </span>
+                    {skill.downloadCount > 0 && (
+                      <span className="ub-downloads">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                        {skill.downloadCount.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Featured Free Skills */}
+      {freeSkills.length > 0 && (
+        <section className="ub-free-skills">
+          <div className="ub-free-header">
+            <div className="ub-free-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              </svg>
+              FREE TO USE
+            </div>
+            <h2>Start Building Now</h2>
+            <p>These skills are completely free. No wallet required. Just install and use.</p>
+          </div>
+          <div className="ub-free-grid">
+            {freeSkills.map((skill) => (
+              <Link
+                key={skill.skillId}
+                to={`/skill/${skill.skillId}`}
+                className="ub-free-card"
+              >
+                <div className="ub-free-card-header">
+                  <span className={`ub-tag ${skill.category === 'workflow' ? 'ub-tag-workflow' : 'ub-tag-api'}`}>
+                    {skill.category === 'workflow' ? 'WORKFLOW' : 'API'}
+                  </span>
+                  <BadgeChip badge={skill.badge} />
+                  <span className="ub-free-tag">FREE</span>
+                </div>
+                <h3>{skill.name}</h3>
+                <p>{skill.description || 'No description available'}</p>
+                <div className="ub-free-card-footer">
+                  <span className="ub-card-domain">{skill.domain || skill.serviceName || 'API'}</span>
+                  {skill.downloadCount > 0 && (
+                    <span className="ub-card-downloads">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                      </svg>
+                      {skill.downloadCount.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Marketplace */}
+      <section className="ub-marketplace">
+        <div className="ub-marketplace-header">
+          <div className="ub-marketplace-title">
+            <span className="ub-title-accent">//</span>
+            SKILL MARKETPLACE
+          </div>
+
+          <div className="ub-marketplace-controls">
+            <div className="ub-filter-tabs">
+              {['all', 'api-package', 'workflow'].map(f => (
+                <button
+                  key={f}
+                  className={`ub-filter-tab ${categoryFilter === f ? 'active' : ''}`}
+                  onClick={() => setCategoryFilter(f)}
+                >
+                  {f === 'api-package' ? 'APIs' : f === 'workflow' ? 'WORKFLOWS' : 'ALL'}
+                </button>
+              ))}
+            </div>
+            <div className="ub-filter-tabs" style={{ marginLeft: '1rem' }}>
+              {['all', 'free', 'paid'].map(f => (
+                <button
+                  key={f}
+                  className={`ub-filter-tab ${activeFilter === f ? 'active' : ''}`}
+                  onClick={() => setActiveFilter(f)}
+                >
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSearch} className="ub-search-form">
               <svg className="ub-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.3-4.3" />
               </svg>
               <input
-                ref={searchInputRef}
                 type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search skills, APIs, services..."
+                placeholder="Search APIs, services..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
                 className="ub-search-input"
-                autoFocus
               />
-              {query && (
-                <button type="button" onClick={() => setQuery('')} className="ub-search-clear">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </form>
-
-          {/* Action buttons */}
-          <div className="ub-home-actions">
-            <button onClick={browseAll} className="ub-home-btn ub-home-btn-primary">
-              Explore Skills
-            </button>
-            <a href="https://github.com/lekt9/unbrowse-openclaw" target="_blank" rel="noopener" className="ub-home-btn">
-              Install Plugin
-            </a>
+            </form>
           </div>
-
-          {/* Service chips for quick browsing */}
-          {services.length > 0 && (
-            <div className="ub-service-chips">
-              {services.map(svc => (
-                <button
-                  key={svc.name}
-                  className="ub-service-chip"
-                  onClick={() => browseService(svc.name)}
-                >
-                  {svc.name}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Stats */}
-          <p className="ub-home-stats">
-            <strong>{stats.total}</strong> skills indexed
-            {stats.free > 0 && <> · <strong>{stats.free}</strong> free</>}
-          </p>
-
-          {/* Chat Demo */}
-          <ChatDemo />
-
-          {/* Why Unbrowse */}
-          <div className="ub-value-grid">
-            <div className="ub-value-card">
-              <div className="ub-value-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="10"/>
-                  <path d="M12 6v6l4 2"/>
-                </svg>
-              </div>
-              <h3>Watch & Learn</h3>
-              <p>Your agent browses sites normally. Unbrowse captures the traffic and reverse-engineers the APIs.</p>
-            </div>
-
-            <div className="ub-value-card">
-              <div className="ub-value-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                </svg>
-              </div>
-              <h3>100x Faster</h3>
-              <p>Next time, your agent calls the API directly instead of clicking through a browser.</p>
-            </div>
-
-            <div className="ub-value-card">
-              <div className="ub-value-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="10"/>
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                  <path d="M2 12h20"/>
-                </svg>
-              </div>
-              <h3>Share & Earn</h3>
-              <p>Publish skills here. Other agents download them instantly. Earn 70% of every sale.</p>
-            </div>
-          </div>
-
-          {/* Install command */}
-          <div className="ub-install-box">
-            <span className="ub-install-label">Install for OpenClaw</span>
-            <div className="ub-install-cmd">
-              <code>openclaw plugins install @getfoundry/unbrowse-openclaw</code>
-              <button
-                className="ub-install-copy"
-                onClick={() => {
-                  navigator.clipboard.writeText('openclaw plugins install @getfoundry/unbrowse-openclaw');
-                }}
-                title="Copy to clipboard"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Trending Skills */}
-          {trendingSkills.length > 0 && (
-            <div className="ub-trending">
-              <h3 className="ub-popular-title">Trending Now</h3>
-              <div className="ub-popular-grid">
-                {trendingSkills.map(skill => {
-                  const isFree = parseFloat(skill.priceUsdc || '0') === 0;
-                  return (
-                    <Link
-                      key={skill.skillId}
-                      to={`/skill/${skill.skillId}`}
-                      className="ub-popular-card ub-trending-card"
-                    >
-                      <div className="ub-popular-name">
-                        {skill.name}
-                        <BadgeChip badge={skill.badge} />
-                        {isFree && !skill.badge && <span className="ub-popular-free">FREE</span>}
-                      </div>
-                      <div className="ub-popular-desc">
-                        {skill.serviceName || skill.domain || 'API Skill'}
-                        {skill.velocity > 0 && (
-                          <span className="ub-trending-velocity">+{Math.round(skill.velocity * 100)}%</span>
-                        )}
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Popular Skills */}
-          {popularSkills.length > 0 && (
-            <div className="ub-popular">
-              <h3 className="ub-popular-title">Popular Skills</h3>
-              <div className="ub-popular-grid">
-                {popularSkills.map(skill => {
-                  const isFree = parseFloat(skill.priceUsdc || '0') === 0;
-                  return (
-                    <Link
-                      key={skill.skillId}
-                      to={`/skill/${skill.skillId}`}
-                      className="ub-popular-card"
-                    >
-                      <div className="ub-popular-name">
-                        {skill.name}
-                        <BadgeChip badge={skill.badge} />
-                        {isFree && !skill.badge && <span className="ub-popular-free">FREE</span>}
-                      </div>
-                      <div className="ub-popular-desc">
-                        {skill.serviceName || skill.domain || 'API Skill'}
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </main>
-
-        {/* Footer */}
-        <footer className="ub-home-footer">
-          <div className="ub-footer-section">
-            <span className="ub-footer-location">The Skill Index for OpenClaw — Browser learning for AI agents</span>
-          </div>
-          <div className="ub-footer-divider" />
-          <div className="ub-footer-links">
-            <a href="https://agentskills.io" target="_blank" rel="noopener">Agent Skills Spec</a>
-            <Link to="/docs">Documentation</Link>
-            <a href="https://github.com/lekt9/unbrowse-openclaw" target="_blank" rel="noopener">Open Source</a>
-          </div>
-        </footer>
-      </div>
-    );
-  }
-
-  // Results view (Google results style)
-  return (
-    <div className="ub-results">
-      {/* Header with search */}
-      <header className="ub-results-header">
-        <Link to="/" className="ub-results-logo" onClick={clearSearch}>
-          <span className="ub-logo-u">u</span>
-          <span className="ub-logo-n">n</span>
-          <span className="ub-logo-b">b</span>
-          <span className="ub-logo-r">r</span>
-          <span className="ub-logo-o">o</span>
-          <span className="ub-logo-w">w</span>
-          <span className="ub-logo-s">s</span>
-          <span className="ub-logo-e">e</span>
-        </Link>
-
-        <form onSubmit={handleSearch} className="ub-results-search">
-          <div className="ub-search-wrapper">
-            <svg className="ub-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" />
-              <path d="m21 21-4.3-4.3" />
-            </svg>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="ub-search-input"
-            />
-            {query && (
-              <button type="button" onClick={clearSearch} className="ub-search-clear">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-            <button type="submit" className="ub-search-submit">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-            </button>
-          </div>
-        </form>
-
-        <nav className="ub-results-nav">
-          <Link to="/docs" className="ub-results-link">Docs</Link>
-        </nav>
-      </header>
-
-      {/* Filter tabs */}
-      <div className="ub-results-tabs">
-        <div className="ub-tabs-inner">
-          {/* Category filters */}
-          {[
-            { key: 'all', label: 'All' },
-            { key: 'api', label: 'APIs' },
-            { key: 'workflow', label: 'Workflows' },
-          ].map(tab => (
-            <button
-              key={tab.key}
-              className={`ub-tab ${categoryFilter === tab.key ? 'active' : ''}`}
-              onClick={() => setCategoryFilter(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-          <span className="ub-tab-divider">|</span>
-          {/* Price filters */}
-          {[
-            { key: 'all', label: 'Any Price' },
-            { key: 'free', label: 'Free' },
-            { key: 'paid', label: 'Paid' },
-          ].map(tab => (
-            <button
-              key={`price-${tab.key}`}
-              className={`ub-tab ${activeFilter === tab.key ? 'active' : ''}`}
-              onClick={() => setActiveFilter(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
         </div>
-      </div>
 
-      {/* Results */}
-      <main className="ub-results-main">
         {loading ? (
-          <div className="ub-results-loading">
-            <div className="ub-spinner" />
+          <div className="ub-loading">
+            <div className="ub-loader" />
+            <span>SCANNING MARKETPLACE...</span>
           </div>
-        ) : filteredSkills.length === 0 ? (
-          <div className="ub-results-empty">
-            <p>No skills found for "<strong>{query}</strong>"</p>
-            <p className="ub-results-hint">Try different keywords or browse all skills</p>
+        ) : sortedSkills.length === 0 ? (
+          <div className="ub-empty">
+            <div className="ub-empty-icon">NULL</div>
+            <p>No skills match your query</p>
           </div>
         ) : (
-          <>
-            <p className="ub-results-count">
-              About {filteredSkills.length} results
-            </p>
-            <div className="ub-results-list">
-              {filteredSkills.map(skill => {
-                const price = parseFloat(skill.priceUsdc || '0');
-                const isFree = price === 0;
+          <div className="ub-skills-grid">
+            {sortedSkills.map((skill) => {
+              const price = parseFloat(skill.priceUsdc || '0');
+              const isFree = price === 0;
 
-                return (
-                  <article key={skill.skillId} className="ub-result">
-                    <div className="ub-result-url">
-                      <span className="ub-result-domain">unbrowse.ai</span>
-                      <span className="ub-result-path"> › skill › {skill.name}</span>
-                    </div>
-                    <Link to={`/skill/${skill.skillId}`} className="ub-result-title">
-                      {skill.name}
+              return (
+                <Link
+                  key={skill.skillId}
+                  to={`/skill/${skill.skillId}`}
+                  className="ub-skill-card"
+                >
+                  <div className="ub-card-stripe" />
+
+                  <div className="ub-card-header">
+                    <div className="ub-card-tags">
+                      <span className={`ub-tag ${skill.category === 'workflow' ? 'ub-tag-workflow' : 'ub-tag-api'}`}>
+                        {skill.category === 'workflow' ? 'WORKFLOW' : 'API'}
+                      </span>
                       <BadgeChip badge={skill.badge} />
-                      {isFree && !skill.badge && <span className="ub-result-free">FREE</span>}
-                    </Link>
-                    <p className="ub-result-desc">
-                      {skill.description || `${skill.name} API skill for OpenClaw.`}
-                      {skill.domain && <> Service: <strong>{skill.domain}</strong>.</>}
-                      {skill.authType && skill.authType !== 'none' && <> Auth: {skill.authType}.</>}
-                    </p>
-                    <div className="ub-result-meta">
-                      {skill.category && (
-                        <span className="ub-result-tag">{skill.category === 'workflow' ? 'Workflow' : 'API'}</span>
-                      )}
-                      {skill.downloadCount > 0 && (
-                        <span className="ub-result-downloads">{skill.downloadCount.toLocaleString()} downloads</span>
-                      )}
-                      {!isFree && (
-                        <span className="ub-result-price">${price.toFixed(2)} USDC</span>
+                      {skill.authType && skill.authType !== 'none' && (
+                        <span className="ub-tag ub-tag-auth">{skill.authType}</span>
                       )}
                     </div>
-                  </article>
-                );
-              })}
-            </div>
-          </>
+                    <div className={`ub-card-price ${isFree ? 'free' : ''}`}>
+                      {isFree ? 'FREE' : `$${price.toFixed(2)}`}
+                    </div>
+                  </div>
+
+                  <h3 className="ub-card-name">{skill.name}</h3>
+
+                  <p className="ub-card-desc">
+                    {skill.description || 'No description available'}
+                  </p>
+
+                  <div className="ub-card-footer">
+                    <span className="ub-card-domain">
+                      {skill.domain || skill.serviceName || 'API'}
+                    </span>
+                    <div className="ub-card-stats">
+                      {skill.downloadCount > 0 && (
+                        <span className="ub-card-downloads">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                          </svg>
+                          {skill.downloadCount.toLocaleString()}
+                        </span>
+                      )}
+                      {skill.qualityScore >= 80 && (
+                        <span className="ub-quality">VERIFIED</span>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         )}
-      </main>
+      </section>
+
+      {/* Final CTA */}
+      <section className="ub-cta">
+        <div className="ub-cta-bg" />
+        <div className="ub-cta-content">
+          <h2>EVERY API YOU'VE EVER WORKED WITH<br/>IS AN OPPORTUNITY.</h2>
+          <p>Capture it once. Earn forever.</p>
+          <div className="ub-cta-buttons">
+            <a
+              href="https://github.com/lekt9/unbrowse-openclaw"
+              target="_blank"
+              rel="noopener"
+              className="ub-btn ub-btn-primary"
+            >
+              <span className="ub-btn-glow" />
+              START EARNING
+            </a>
+            <Link to="/docs" className="ub-btn ub-btn-ghost">
+              READ DOCS
+            </Link>
+          </div>
+        </div>
+      </section>
 
       {/* Footer */}
-      <footer className="ub-results-footer">
-        <div className="ub-footer-links">
-          <a href="https://github.com/lekt9/unbrowse-openclaw" target="_blank" rel="noopener">GitHub</a>
-          <Link to="/docs">Docs</Link>
-          <a href="https://agentskills.io" target="_blank" rel="noopener">Agent Skills Spec</a>
+      <footer className="ub-footer">
+        <div className="ub-footer-inner">
+          <div className="ub-footer-brand">
+            <span className="ub-footer-logo">
+              <span className="ub-footer-mark">//</span>
+              UNBROWSE
+            </span>
+            <span className="ub-footer-tagline">Reverse engineer. Monetize. Repeat.</span>
+          </div>
+          <nav className="ub-footer-nav">
+            <a href="https://github.com/lekt9/unbrowse-openclaw" target="_blank" rel="noopener">GitHub</a>
+            <Link to="/docs">Docs</Link>
+            <a href="https://agentskills.io" target="_blank" rel="noopener">Agent Skills Spec</a>
+          </nav>
         </div>
       </footer>
+
+      {/* Copy Page Button (for LLMs) */}
+      <button
+        className="ub-copy-page-btn"
+        onClick={() => window.copyPageAsMarkdown?.()}
+        title="Copy page as markdown"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+        <span>Copy for LLM</span>
+      </button>
     </div>
   );
 }
