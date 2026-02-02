@@ -3,17 +3,17 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 const API_BASE = 'https://index.unbrowse.ai';
 
-// Chat-style demo showing the workflow
+// Chat-style demo showing the workflow (based on real OpenClaw logs)
 function ChatDemo() {
   const [step, setStep] = useState(0);
   const messages = [
-    { type: 'user', text: 'can you learn meteora.ag?' },
-    { type: 'assistant', text: 'I\'ll capture the Meteora API. Opening browser...' },
-    { type: 'assistant', text: 'Intercepted 23 endpoints from app.meteora.ag' },
-    { type: 'assistant', text: 'Generated skill: meteora-pools with getLbPairs, getPositions, swap' },
-    { type: 'status', text: 'Skill learned: meteora-pools' },
-    { type: 'user', text: 'publish it for 1 USDC' },
-    { type: 'assistant', text: 'Published to marketplace. You\'ll earn $0.70 per download.' },
+    { type: 'user', text: 'learn meteora.ag via unbrowse' },
+    { type: 'assistant', text: 'on it, capturing meteora.ag APIs now' },
+    { type: 'status', text: 'Captured: 47 requests from 3 pages' },
+    { type: 'assistant', text: 'Skill: meteora-dlmm\nEndpoints: 12\nVerified: 12/12 GET endpoints' },
+    { type: 'status', text: 'Installed: ~/.openclaw/skills/meteora-dlmm' },
+    { type: 'user', text: 'publish for 1 USDC' },
+    { type: 'assistant', text: 'Published to marketplace. You earn $0.70 per download.' },
   ];
 
   useEffect(() => {
