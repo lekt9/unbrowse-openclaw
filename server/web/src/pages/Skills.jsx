@@ -211,22 +211,22 @@ export default function Skills() {
         <div className="ub-hero-content">
           <div className="ub-hero-badge">
             <span className="ub-pulse" />
-            <span>SKIP THE BROWSER. CALL THE API.</span>
+            <span>OPENCLAW PLUGIN — 100x FASTER WEB ACCESS</span>
           </div>
 
           <div className="ub-hero-headline-row">
             <h1 className="ub-headline">
-              <span className="ub-headline-top">200ms vs 45 SECONDS</span>
+              <span className="ub-headline-top">YOUR AGENT IS SLOW.</span>
               <span className="ub-headline-main">
-                <span className="ub-glitch" data-text="YOU CHOOSE.">YOU CHOOSE.</span>
+                <span className="ub-glitch" data-text="WE FIX THAT.">WE FIX THAT.</span>
               </span>
             </h1>
             <img src="/mascot.png" alt="Unbrowse mascot" className="ub-mascot" />
           </div>
 
           <p className="ub-tagline">
-            Every website has internal APIs. We capture them.
-            <strong> Your agent calls APIs directly instead of waiting for a browser.</strong>
+            Browser automation takes 45 seconds. Internal APIs take 200ms.
+            <strong> We capture the APIs so your OpenClaw agent skips the browser.</strong>
           </p>
 
           {/* Primary Search */}
