@@ -4363,9 +4363,10 @@ a {
 /* Hero Headline Row with Mascot */
 .ub-hero-headline-row {
   display: flex;
+  flex-direction: column-reverse;
   align-items: center;
   justify-content: center;
-  gap: 24px;
+  gap: 16px;
 }
 
 .ub-mascot {
@@ -4385,11 +4386,6 @@ a {
 }
 
 @media (max-width: 768px) {
-  .ub-hero-headline-row {
-    flex-direction: column-reverse;
-    gap: 16px;
-  }
-
   .ub-mascot {
     width: 100px;
   }
