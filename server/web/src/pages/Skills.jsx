@@ -211,22 +211,22 @@ export default function Skills() {
         <div className="ub-hero-content">
           <div className="ub-hero-badge">
             <span className="ub-pulse" />
-            <span>EVERY WEBSITE HAS A HIDDEN API. WE CAPTURE IT.</span>
+            <span>SKIP THE BROWSER. CALL THE API.</span>
           </div>
 
           <div className="ub-hero-headline-row">
             <h1 className="ub-headline">
-              <span className="ub-headline-top">INTERNAL APIs</span>
+              <span className="ub-headline-top">200ms vs 45 SECONDS</span>
               <span className="ub-headline-main">
-                <span className="ub-glitch" data-text="FOR OPENCLAW.">FOR OPENCLAW.</span>
+                <span className="ub-glitch" data-text="YOU CHOOSE.">YOU CHOOSE.</span>
               </span>
             </h1>
             <img src="/mascot.png" alt="Unbrowse mascot" className="ub-mascot" />
           </div>
 
           <p className="ub-tagline">
-            When you click a button, your browser calls an internal API. We capture those endpoints —
-            <strong> your agent skips the browser and calls APIs directly. 100x faster.</strong>
+            Every website has internal APIs. We capture them.
+            <strong> Your agent calls APIs directly instead of waiting for a browser.</strong>
           </p>
 
           {/* Primary Search */}
