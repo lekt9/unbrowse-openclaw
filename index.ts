@@ -1212,14 +1212,17 @@ const plugin = {
               logger.info(`[unbrowse] Capture → ${result.service} (${result.endpointCount} endpoints, ${crawlResult?.pagesCrawled ?? 0} crawled, via ${method})`);
               return { content: [{ type: "text", text: summaryLines.join("\n") }] };
             } catch (err) {
+              const { formatErrorForTool } = await import("./src/error-messages.js");
               const msg = (err as Error).message;
+              // Specific known errors with custom handling
               if (msg.includes("Target page, context or browser has been closed")) {
                 return { content: [{ type: "text", text: "Browser context closed unexpectedly. Try again." }] };
               }
               if (msg.includes("playwright")) {
                 return { content: [{ type: "text", text: `Playwright not available: ${msg}. Install with: bun add playwright` }] };
               }
-              return { content: [{ type: "text", text: `Capture failed: ${msg}` }] };
+              // Use friendly error formatter for other errors
+              return { content: [{ type: "text", text: formatErrorForTool(err, "Capture failed") }] };
             }
           },
         },
@@ -1275,11 +1278,12 @@ const plugin = {
               logger.info(`[unbrowse] Auth: ${Object.keys(authHeaders).length} headers, ${Object.keys(cookies).length} cookies`);
               return { content: [{ type: "text", text: lines.join("\n") }] };
             } catch (err) {
+              const { formatErrorForTool } = await import("./src/error-messages.js");
               const msg = (err as Error).message;
               if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
-                return { content: [{ type: "text", text: `Browser not running on port ${browserPort}.` }] };
+                return { content: [{ type: "text", text: `Browser not running on port ${browserPort}.\n\nStart Chrome with remote debugging or let unbrowse_capture launch it.` }] };
               }
-              return { content: [{ type: "text", text: `Auth extraction failed: ${msg}` }] };
+              return { content: [{ type: "text", text: formatErrorForTool(err, "Auth extraction failed") }] };
             }
           },
         },
