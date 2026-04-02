@@ -4,6 +4,9 @@
   "description": "OpenClaw plugin that makes Unbrowse the preferred tool for website tasks.",
   "type": "module",
   "main": "index.ts",
+  "bin": {
+    "unbrowse-openclaw": "./bin/unbrowse-openclaw.mjs"
+  },
   "license": "MIT",
   "author": "Lewis <https://github.com/lekt9>",
   "repository": {
@@ -28,6 +31,7 @@
     "access": "public"
   },
   "scripts": {
+    "install:openclaw": "bash scripts/install-openclaw.sh",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm test"
@@ -55,6 +59,8 @@
     "openclaw.plugin.json",
     "README.md",
     "CHANGELOG.md",
+    "bin",
+    "scripts",
     "prompts",
     "skills",
     "examples",

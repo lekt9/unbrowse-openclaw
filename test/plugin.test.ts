@@ -24,6 +24,7 @@ test("fallback mode config keeps browser available", async () => {
   const snippet = mod.__test.buildSuggestedConfig("fallback");
 
   assert.match(snippet, /"unbrowse-openclaw"/);
+  assert.match(snippet, /allow: \["unbrowse-openclaw"\]/);
   assert.doesNotMatch(snippet, /slots:/);
   assert.doesNotMatch(snippet, /deny: \["browser"\]/);
 });
@@ -76,6 +77,16 @@ test("strict mode block reason points agents back to the Unbrowse path", async (
   assert.match(reason, /Use `unbrowse`/);
 });
 
+test("trusted install guide explains the local-load path", async () => {
+  const mod = await import("../index.ts");
+  const guide = mod.__test.buildTrustedInstallGuide("strict");
+
+  assert.match(guide, /Trusted local-load path/);
+  assert.match(guide, /node:child_process/);
+  assert.match(guide, /process\.env/);
+  assert.match(guide, /allow: \["unbrowse-openclaw"\]/);
+});
+
 test("plugin manifest ships the browser-routing skill", () => {
   const manifest = JSON.parse(
     readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"),
@@ -86,4 +97,13 @@ test("plugin manifest ships the browser-routing skill", () => {
     readFileSync(new URL("../skills/unbrowse-browser/SKILL.md", import.meta.url), "utf8"),
     /Route website tasks through the Unbrowse-backed browser path/,
   );
+});
+
+test("package exposes the npm installer bin", () => {
+  const pkg = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { bin?: Record<string, string>; dependencies?: Record<string, string> };
+
+  assert.equal(pkg.bin?.["unbrowse-openclaw"], "./bin/unbrowse-openclaw.mjs");
+  assert.equal(pkg.dependencies?.unbrowse, "^1.1.5");
 });

@@ -256,10 +256,28 @@ function buildBrowserFallbackBlockReason(): string {
   ].join(" ");
 }
 
+function buildTrustedInstallGuide(mode: "strict" | "fallback"): string {
+  return [
+    "Trusted local-load path:",
+    "1. Review this plugin locally before enabling it.",
+    "2. Load it from disk instead of using a remote registry install.",
+    "",
+    "Why install scanners may warn:",
+    "- `node:child_process` because the plugin launches the local `unbrowse` CLI",
+    "- `process.env` because it passes local config like `UNBROWSE_URL` into that child process",
+    "- local file reads because it loads bundled prompt/skill/config files from its own directory",
+    "- it does not contact external websites during install or load; network traffic starts only after an agent explicitly calls `unbrowse`",
+    "",
+    "Suggested config:",
+    buildSuggestedConfig(mode),
+  ].join("\n");
+}
+
 function buildSuggestedConfig(mode: "strict" | "fallback"): string {
   return [
     "{",
     "  plugins: {",
+    `    allow: ["${PLUGIN_ID}"],`,
     '    load: { paths: ["./submodules/openclaw-unbrowse-plugin"] },',
     "    entries: {",
     `      "${PLUGIN_ID}": {`,
@@ -282,6 +300,7 @@ export const __test = {
   buildBrowserFallbackBlockReason,
   buildBootstrapGuide,
   buildSuggestedConfig,
+  buildTrustedInstallGuide,
   normalizeConfig,
 };
 
@@ -433,6 +452,14 @@ const plugin = {
         .action((mode?: string) => {
           const normalizedMode = mode === "strict" ? "strict" : "fallback";
           process.stdout.write(`${buildSuggestedConfig(normalizedMode)}\n`);
+        });
+
+      command.command("print-trusted-install")
+        .description("Print the recommended local-load install instructions")
+        .argument("[mode]", "strict or fallback", config.routingMode)
+        .action((mode?: string) => {
+          const normalizedMode = mode === "strict" ? "strict" : "fallback";
+          process.stdout.write(`${buildTrustedInstallGuide(normalizedMode)}\n`);
         });
     }, { commands: ["unbrowse-plugin"] });
 

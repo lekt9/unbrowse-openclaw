@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- add a package bin so the published npm package installs with `npx unbrowse-openclaw install` instead of requiring a repo checkout
+- add `scripts/install-openclaw.sh` so install is one command instead of a plugin install plus manual config surgery
+- add `print-trusted-install` so the README's trusted local-load path is real, not aspirational
+- include `plugins.allow` in the generated config snippet so plugin enablement works on first paste
+- clean up README verification/tool-allowlist guidance to match the shipped plugin behavior
 - align plugin id with the published npm package name `unbrowse-openclaw` so OpenClaw install/update/config references stay consistent
 - ship a native `unbrowse-browser` skill plus `before_agent_start` guidance so OpenClaw treats Unbrowse as the default web path instead of just another tool
 - in strict mode, block the built-in `browser` tool via `before_tool_call`
